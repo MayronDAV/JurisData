@@ -24,6 +24,10 @@ if(MSVC)
     add_link_options(/ignore:4099)
 endif()
 
+if (WIN32)
+    add_definitions(-DUNICODE -D_UNICODE)
+endif()
+
 # create bin folder
 file(MAKE_DIRECTORY bin)
 
