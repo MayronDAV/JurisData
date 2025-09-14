@@ -1,6 +1,8 @@
 # JurisData
 
-[![License](https://img.shields.io/github/license/MayronDAV/JurisData.svg)](https://github.com/MayronDAV/JurisData/blob/master/LICENSE)
+[![Licença](https://img.shields.io/github/license/MayronDAV/JurisData.svg)](https://github.com/MayronDAV/JurisData/blob/master/LICENSE)
+
+No momento o código só foi testado no Windows.
 
 ---
 
@@ -14,8 +16,27 @@ git clone https://github.com/MayronDAV/JurisData
 
 ### Instale as dependências
 
-```shell
+```bash
 pip install -e .
+```
+
+### Compile o Servidor (Opcional)
+
+```bash
+.\BuildServer.bat
+```
+
+ou
+
+```bash
+python Scripts/Compiler.py --batch Server/batch_config.json
+```
+
+### Compile o Cliente
+
+```bash
+mkdir build
+cmake -S Client -B build
 ```
 
 ---
@@ -34,6 +55,6 @@ pip install -e .
 
 ---
 
-### 📜 License
+### 📜 Licença
 
-Distributed under the [Apache-2.0 License](https://github.com/MayronDAV/JurisData/blob/master/LICENSE). See LICENSE for more information.
+Distribuído sob a [Licença Apache 2.0](https://github.com/MayronDAV/JurisData/blob/master/LICENSE). Consulte **LICENSE** para obter mais informações.

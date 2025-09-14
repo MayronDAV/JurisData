@@ -1,0 +1,1 @@
+python Scripts/Compiler.py --batch Server/batch_config.json

@@ -1,0 +1,13 @@
+{
+    "scripts": [
+        "Source/Server.py"
+    ],
+    "config": {
+        "name": "JurisDataServer",
+        "onefile": true,
+        "noconsole": false,
+        "console": true,
+        "output_dir": "bin",
+        "build_dir": "../build"
+    }
+}
