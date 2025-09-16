@@ -41,6 +41,8 @@ if (LINUX AND NOT APPLE)
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${BIN_DIR}/lib/${CMAKE_BUILD_TYPE})
 endif()
 
+add_subdirectory(Thirdparty)
+
 include_directories(Source)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${BIN_DIR})
@@ -54,6 +56,7 @@ endif()
 
 file(GLOB_RECURSE JD_SOURCES "Source/**.cpp" "Source/**.h" "Source/**.inl")
 add_executable(${PROJECT_NAME} ${JD_SOURCES})
+link_thirdparty(${PROJECT_NAME})
 if(WIN32)
-    target_link_libraries(${PROJECT_NAME} ws2_32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32)
 endif()
