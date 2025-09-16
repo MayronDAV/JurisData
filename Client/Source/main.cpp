@@ -1,3 +1,7 @@
+#include "Application.h"
+#include "Base.h"
+
+#if 0
 #include <iostream>
 #include <string>
 #include <nlohmann/json.hpp>
@@ -39,23 +43,6 @@ std::wstring GetUnicodeInput()
     return input;
 }
 
-std::string WideToUTF8(const std::wstring& p_WideStr) 
-{
-    #if defined(_WIN32)
-        int utf8_size = WideCharToMultiByte(CP_UTF8, 0, p_WideStr.c_str(), -1, nullptr, 0, nullptr, nullptr);
-        if (utf8_size == 0) return "";
-        
-        std::string utf8_str(utf8_size, '\0');
-        WideCharToMultiByte(CP_UTF8, 0, p_WideStr.c_str(), -1, &utf8_str[0], utf8_size, nullptr, nullptr);
-        
-        return utf8_str.substr(0, utf8_size - 1);
-    #else
-        std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-        return converter.to_bytes(wide_str);
-    #endif
-}
-
-
 json CreateMessage(const std::string& p_Type, const std::string& p_Content) 
 {
     return {
@@ -64,10 +51,11 @@ json CreateMessage(const std::string& p_Type, const std::string& p_Content)
         {"timestamp", std::time(nullptr)}
     };
 }
+#endif
 
-int main() 
+int main()
 {
-    #if defined(_WIN32)
+    #if defined(_WIN32) && !defined(JD_DISABLE_LOG)
         SetConsoleOutputCP(CP_UTF8);
         SetConsoleCP(CP_UTF8);
         
@@ -84,6 +72,13 @@ int main()
         }
     #endif
 
+#if 1
+    auto app = new JD::Application();
+    app->Run();
+    delete app;
+
+    JD::ShowErrorWindow("Teste", "Isso é um teste", false);
+#else
     int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (clientSocket == -1) {
         std::cerr << "Failed to create socket!" << std::endl;
@@ -140,7 +135,7 @@ int main()
         {
             std::cerr << "Server disconnected." << std::endl;
             break;
-        }    
+        }
         
         buffer[bytesReceived] = '\0';
         std::string response_str(buffer);
@@ -161,7 +156,6 @@ int main()
                 std::cout << "Server: " << response_json["content"].get<std::string>() << std::endl;
             else
                 std::cout << "Server: " << response_str << std::endl;
-            
         }
         catch (const std::exception& e) 
         {
@@ -175,5 +169,6 @@ int main()
         WSACleanup();
     #endif
 
+#endif
     return 0;
 }
