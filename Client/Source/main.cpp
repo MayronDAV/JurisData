@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <nlohmann/json.hpp>
 #if defined(_WIN32)
     #include <WinSock2.h>
     #include <WS2tcpip.h>
@@ -11,7 +12,7 @@
     #include <arpa/inet.h>
 #endif
 
-
+using json = nlohmann::json;
 
 std::wstring GetUnicodeInput() 
 {
@@ -26,7 +27,7 @@ std::wstring GetUnicodeInput()
         
         if (ReadConsoleW(h_stdin, buffer, buffer_size - 1, &chars_read, nullptr)) 
         {
-            buffer[chars_read - 2] = L'\0'; // Remove \r\n
+            buffer[chars_read - 2] = L'\0';
             input = buffer;
         }
     #else
@@ -52,6 +53,16 @@ std::string WideToUTF8(const std::wstring& p_WideStr)
         std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
         return converter.to_bytes(wide_str);
     #endif
+}
+
+
+json CreateMessage(const std::string& p_Type, const std::string& p_Content) 
+{
+    return {
+        {"type", p_Type},
+        {"content", p_Content},
+        {"timestamp", std::time(nullptr)}
+    };
 }
 
 int main() 
@@ -96,7 +107,6 @@ int main()
 
     char buffer[2048];
 
-    const char* shutdownCommand = "SHUTDOWN_SERVER";
     while (true)
     {
         std::cout << "You: ";
@@ -106,34 +116,57 @@ int main()
         
         if (input == "exit") 
         {
-            send(clientSocket, shutdownCommand, strlen(shutdownCommand), 0);
+            json shutdown_msg = CreateMessage("command", "shutdown");
+            std::string json_str = shutdown_msg.dump();
+            
+            send(clientSocket, json_str.c_str(), json_str.size(), 0);
             break;
         }
 
-        std::string utf8_message = WideToUTF8(wide_input);
+        json message = CreateMessage("message", WideToUTF8(wide_input));
+        std::string json_str = message.dump();
+        
+        std::cout << "Sending JSON: " << json_str << std::endl;
 
-        int sent = send(clientSocket, utf8_message.c_str(), utf8_message.size(), 0);
+        int sent = send(clientSocket, json_str.c_str(), json_str.size(), 0);
         if (sent <= 0) 
         {
-            std::cerr << "Failed to send message or connection closed." << std::endl;
+            std::cerr << "Failed to send message." << std::endl;
             break;
         }
 
         int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
         if (bytesReceived <= 0) 
         {
-            std::cerr << "Server disconnected or error receiving data." << std::endl;
+            std::cerr << "Server disconnected." << std::endl;
             break;
         }    
+        
         buffer[bytesReceived] = '\0';
-
-        if (memcmp(buffer, shutdownCommand, sizeof(shutdownCommand)) == 0)
+        std::string response_str(buffer);
+        
+        try
         {
-            std::cout << "Server is shutting down." << std::endl;
-            break;
+            json response_json = json::parse(response_str);
+            
+            if (response_json.contains("type") && response_json["type"] == "command") 
+            {
+                if (response_json["content"] == "shutdown") 
+                {
+                    std::cout << "Server is shutting down." << std::endl;
+                    break;
+                }
+            }
+            else if (response_json.contains("content")) 
+                std::cout << "Server: " << response_json["content"].get<std::string>() << std::endl;
+            else
+                std::cout << "Server: " << response_str << std::endl;
+            
         }
-
-        std::cout << "Server: " << buffer << std::endl;
+        catch (const std::exception& e) 
+        {
+            std::cout << "Server (non-JSON): " << response_str << std::endl;
+        }
     }
 
     close(clientSocket);

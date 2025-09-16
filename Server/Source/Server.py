@@ -1,4 +1,6 @@
 import socket
+import json
+import time
 
 class Server:
     def __init__(self, p_Host="localhost", p_Port=8082):
@@ -7,6 +9,14 @@ class Server:
         self.ServerAddress = (p_Host, p_Port)
         self.DataPayload = 2048
         self.ShutdownCommand = "SHUTDOWN_SERVER"
+    
+    def CreateResponse(self, p_Type, p_Content):
+        """Cria uma resposta JSON"""
+        return {
+            "type": p_Type,
+            "content": p_Content,
+            "timestamp": time.time()
+        }
     
     def Start(self):
         self.ServerSocket.bind(self.ServerAddress)
@@ -24,21 +34,46 @@ class Server:
                     if not data:
                         break
                     
-                    message = data.decode('utf-8')
-                    
-                    if message == self.ShutdownCommand:
-                        print("Shutdown command received. Stopping server.")
-                        break
-                    
-                    print(f"Client: {message}")
-                    
-                    server_message = input("You: ")
-                    if server_message.lower() == "exit":
-                        print("Closing connection with client.")
-                        client_socket.send(self.ShutdownCommand.encode('utf-8'))
-                        break
-                    
-                    client_socket.send(server_message.encode('utf-8'))
+                    try:
+                        json_data = json.loads(data.decode('utf-8'))
+                        
+                        if json_data.get('type').lower() == 'command' and json_data.get('content').lower() == 'shutdown':
+                            print("Shutdown command received. Stopping server.")
+                            response = self.CreateResponse("command", "shutdown")
+                            client_socket.send(json.dumps(response).encode('utf-8'))
+                            break
+                        
+                        if json_data.get('type').lower() == 'message':
+                            message_content = json_data.get('content', '')
+                            print(f"Client: {message_content}")
+                            
+                            server_message = input("You: ")
+                            if server_message.lower() == "exit":
+                                print("Closing connection with client.")
+                                response = self.CreateResponse("command", "shutdown")
+                                client_socket.send(json.dumps(response).encode('utf-8'))
+                                break
+                            
+                            response = self.CreateResponse("message", server_message)
+                            message = json.dumps(response).encode('utf-8')
+                            print(f"Sending: {message}")
+                            client_socket.send(message)
+                            
+                    except json.JSONDecodeError:
+                        message = data.decode('utf-8')
+                        print(f"Client (non-JSON): {message}")
+                        
+                        if message == self.ShutdownCommand:
+                            print("Shutdown command received. Stopping server.")
+                            break
+                        
+                        server_message = input("You: ")
+                        if server_message.lower() == "exit":
+                            print("Closing connection with client.")
+                            client_socket.send(self.ShutdownCommand.encode('utf-8'))
+                            break
+                        
+                        client_socket.send(server_message.encode('utf-8'))
                     
                 except Exception as e:
                     print(f"Error: {e}")
