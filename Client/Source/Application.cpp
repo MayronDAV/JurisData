@@ -151,6 +151,7 @@ namespace JD
                 {
                     ImguiLayer::BeginDockspace("MyDockspace", "MainDockspace");
 
+		            ImGui::SetNextWindowDockID(ImGui::GetID("MyDockspace"), ImGuiCond_Once);
                     ImGui::ShowDemoWindow();
 
                     ImguiLayer::EndDockspace();
