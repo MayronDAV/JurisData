@@ -25,8 +25,12 @@ namespace JD
             void PollEvents();
 
             bool ShouldClose() const;
+            bool IsMinimized() const;
 
-            GLFWwindow* Get() { return m_Window; }
+            int GetWidth() const;
+            int GetHeight() const;
+
+            GLFWwindow* GetNative() { return m_Window; }
 
         private:
             GLFWwindow* m_Window = nullptr;

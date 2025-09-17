@@ -13,8 +13,12 @@ namespace JD
             void Run();
             Window& GetWindow() { return *m_Window; }
 
+            static Application& Get() { return *s_Instance; }
+
         private:
             Window* m_Window = nullptr;
+
+            static inline Application* s_Instance = nullptr;
     };
     
 } // namespace JD

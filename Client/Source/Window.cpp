@@ -11,7 +11,7 @@ namespace JD
     {
         if (!glfwInit())
         {
-            ShowErrorWindow("GLFW Initialization Error", "Failed to initialize GLFW");
+            ShowErrorWindow("GLFW Initialization Error", "Failed to initialize GLFW", true);
         }
 
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -22,7 +22,7 @@ namespace JD
         if (!m_Window)
         {
             glfwTerminate();
-            ShowErrorWindow("GLFW Window Creation Error", "Failed to create GLFW window");
+            ShowErrorWindow("GLFW Window Creation Error", "Failed to create GLFW window", true);
         }
 
         glfwMakeContextCurrent(m_Window);
@@ -31,13 +31,10 @@ namespace JD
         {
             glfwDestroyWindow(m_Window);
             glfwTerminate();
-            ShowErrorWindow("GLAD Initialization Error", "Failed to initialize GLAD");
+            ShowErrorWindow("GLAD Initialization Error", "Failed to initialize GLAD", true);
         }
 
-        if (p_Spec.Vsync)
-            glfwSwapInterval(1); // Enable V-Sync
-        else
-            glfwSwapInterval(0); // Disable V-Sync
+        glfwSwapInterval(p_Spec.Vsync ? 1 : 0);
     }
     
     Window::~Window()
@@ -59,8 +56,27 @@ namespace JD
         glfwPollEvents();
     }
     
+    int Window::GetWidth() const
+    {
+        int width, height;
+        glfwGetWindowSize(m_Window, &width, &height);
+        return width;
+    }
+
+    int Window::GetHeight() const
+    {
+        int width, height;
+        glfwGetWindowSize(m_Window, &width, &height);
+        return height;
+    }
+
     bool Window::ShouldClose() const
     {
         return glfwWindowShouldClose(m_Window);
+    }
+
+    bool Window::IsMinimized() const
+    {
+        return glfwGetWindowAttrib(m_Window, GLFW_ICONIFIED) == GLFW_TRUE;
     }
 } // namespace JD

@@ -55,16 +55,18 @@ json CreateMessage(const std::string& p_Type, const std::string& p_Content)
 
 int main()
 {
-    #if defined(_WIN32) && !defined(JD_DISABLE_LOG)
-        SetConsoleOutputCP(CP_UTF8);
-        SetConsoleCP(CP_UTF8);
-        
-        // Enable Input UNICODE
-        HANDLE h_stdin = GetStdHandle(STD_INPUT_HANDLE);
-        DWORD mode;
-        GetConsoleMode(h_stdin, &mode);
-        SetConsoleMode(h_stdin, mode | ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_PROCESSED_INPUT);
-        
+    #if defined(_WIN32)
+        #ifndef JD_DISABLE_LOG
+            SetConsoleOutputCP(CP_UTF8);
+            SetConsoleCP(CP_UTF8);
+            
+            // Enable Input UNICODE
+            HANDLE h_stdin = GetStdHandle(STD_INPUT_HANDLE);
+            DWORD mode;
+            GetConsoleMode(h_stdin, &mode);
+            SetConsoleMode(h_stdin, mode | ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_PROCESSED_INPUT);
+        #endif
+
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
             std::cerr << "Failed to initialize WinSock" << std::endl;
