@@ -70,6 +70,14 @@ namespace JD
         return height;
     }
 
+    float Window::GetDPIScale() const
+    {
+        GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+        float xscale, yscale;
+        glfwGetMonitorContentScale(monitor, &xscale, &yscale);
+        return xscale;
+    }
+
     bool Window::ShouldClose() const
     {
         return glfwWindowShouldClose(m_Window);

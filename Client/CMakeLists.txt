@@ -59,7 +59,7 @@ if(WIN32)
 endif()
 
 if (MSVC)
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8 /Zc:char8_t-)
 else()
     target_compile_options(${PROJECT_NAME} PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8)
 endif()

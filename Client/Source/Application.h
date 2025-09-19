@@ -16,6 +16,10 @@ namespace JD
             static Application& Get() { return *s_Instance; }
 
         private:
+            void DrawUI();
+
+        private:
+            std::string m_LinkToScrape = "";
             Window* m_Window = nullptr;
 
             static inline Application* s_Instance = nullptr;

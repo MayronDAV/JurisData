@@ -30,6 +30,8 @@ namespace JD
             int GetWidth() const;
             int GetHeight() const;
 
+            float GetDPIScale() const;
+
             GLFWwindow* GetNative() { return m_Window; }
 
         private:

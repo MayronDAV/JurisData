@@ -1,4 +1,5 @@
 #include "Application.h"
+#include "MaterialDesignIcons.h"
 
 // lib
 #include <imgui.h>
@@ -6,13 +7,21 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 
+// std
+#include <chrono>
+
 
 
 namespace JD
 {
     namespace ImguiLayer
     {
-        static void Init()
+        #include "Embed/Fonts/MaterialDesign.inl"
+        #include "Embed/Fonts/RobotoBold.inl"
+        #include "Embed/Fonts/RobotoMedium.inl"
+        #include "Embed/Fonts/RobotoRegular.inl"
+
+        static void Init(const float p_FontSize = 14.0f)
         {
             IMGUI_CHECKVERSION();
             ImGui::CreateContext();
@@ -25,6 +34,54 @@ namespace JD
             io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleViewports;
             io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleFonts;
             io.ConfigFlags |= ImGuiConfigFlags_DpiEnableScaleViewports;
+
+            ImGui::StyleColorsDark();
+
+            io.FontGlobalScale = 1.0f;
+
+            ImFontConfig icons_config;
+            icons_config.MergeMode = false;
+            icons_config.PixelSnapH = true;
+            icons_config.OversampleH = icons_config.OversampleV = 1;
+            icons_config.GlyphMinAdvanceX = 4.0f;
+            icons_config.SizePixels = 12.0f;
+
+            static const ImWchar ranges[] = {
+                0x0020, 0x00FF, // Basic Latin + Latin Supplement
+                0x0100, 0x017F, // Latin Extended-A
+                0x0180, 0x024F, // Latin Extended-B
+                0x0300, 0x036F, // Combining Diacritical Marks
+                0x0400, 0x04FF, // Cyrillic
+                0x0100, 0x017F,
+                0
+            };
+
+            io.Fonts->AddFontFromMemoryCompressedTTF(RobotoRegular_compressed_data, RobotoRegular_compressed_size, p_FontSize, &icons_config, ranges);
+            
+            {
+                static const ImWchar icons_ranges[] = { ICON_MIN_MDI, ICON_MAX_MDI, 0 };
+                ImFontConfig icons_config;
+                // merge in icons from Font Awesome
+                icons_config.MergeMode = true;
+                icons_config.PixelSnapH = true;
+                icons_config.GlyphOffset.y = 1.0f;
+                icons_config.OversampleH = icons_config.OversampleV = 1;
+                icons_config.GlyphMinAdvanceX = 4.0f;
+                icons_config.SizePixels = 12.0f;
+
+                io.Fonts->AddFontFromMemoryCompressedTTF(MaterialDesign_compressed_data, MaterialDesign_compressed_size, p_FontSize, &icons_config, icons_ranges);
+            }
+
+            io.Fonts->AddFontFromMemoryCompressedTTF(RobotoBold_compressed_data, RobotoBold_compressed_size, p_FontSize, &icons_config, ranges);
+
+            io.Fonts->AddFontFromMemoryCompressedTTF(RobotoRegular_compressed_data, RobotoRegular_compressed_size, p_FontSize, &icons_config, ranges);
+        
+            io.Fonts->TexGlyphPadding = 1;
+            for (int n = 0; n < io.Fonts->Sources.Size; n++)
+            {
+                ImFontConfig* font_config = (ImFontConfig*)&io.Fonts->Sources[n];
+                font_config->RasterizerMultiply = 1.0f;
+            }
 
             ImGui_ImplGlfw_InitForOpenGL(Application::Get().GetWindow().GetNative(), true);
 		    ImGui_ImplOpenGL3_Init("#version 330 core");
@@ -120,6 +177,94 @@ namespace JD
             ImGui::End();
         }
 
+        bool InputText(const std::string& p_ID, std::string& p_Text, const std::string& p_Hint = "", float p_Width = 200.0f, float p_Height = 60.0f, float p_Rounding = 12.0f, ImGuiInputTextFlags p_Flags = 0)
+        {
+            ImGui::PushID(p_ID.c_str());
+
+            ImVec2 initialCursorPos = ImGui::GetCursorPos();
+            ImVec2 initialCursorScreenPos = ImGui::GetCursorScreenPos();
+
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 rectMin = initialCursorScreenPos;
+            ImVec2 rectMax = ImVec2(initialCursorScreenPos.x + p_Width, initialCursorScreenPos.y + p_Height);
+            
+            drawList->AddRectFilled(rectMin, rectMax, IM_COL32(32, 33, 35, 255), p_Rounding);
+            drawList->AddRect(rectMin, rectMax, IM_COL32(64, 65, 67, 255), p_Rounding, 0, 1.0f);
+            
+            ImGui::SetCursorPos(ImVec2(initialCursorPos.x + 16.0f, initialCursorPos.y + 6.0f));
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, p_Rounding - 4.0f);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 255));
+            ImGui::PushStyleColor(ImGuiCol_TextDisabled, IM_COL32(128, 128, 128, 255));
+            
+            char buffer[256];
+            memset(buffer, 0, 256);
+            memcpy(buffer, p_Text.c_str(), p_Text.length());
+            
+            float inputHeight = p_Height - (p_Height / 2.0f);
+
+            bool hasEnterReturnsTrueFlag = (p_Flags & ImGuiInputTextFlags_EnterReturnsTrue) != 0;
+            
+            static bool wasItemActiveLastFrame = false;
+            bool isItemActiveThisFrame = false;
+            
+            ImGuiInputTextFlags actualFlags = p_Flags;
+            if (hasEnterReturnsTrueFlag)
+            {
+                actualFlags &= ~ImGuiInputTextFlags_EnterReturnsTrue;
+            }
+            
+            float originalScale = ImGui::GetFont()->Scale;
+            ImGui::GetFont()->Scale = 1.4f;
+            ImGui::PushFont(ImGui::GetFont());
+
+            bool textUpdated = ImGui::InputTextEx("##Input", p_Hint.c_str(), buffer, 256, ImVec2(p_Width - 60.0f, inputHeight), actualFlags);
+            
+            ImGui::PopFont();
+            ImGui::GetFont()->Scale = originalScale;
+
+            isItemActiveThisFrame = ImGui::IsItemActive();
+            
+            bool enterPressed = false;
+            if (hasEnterReturnsTrueFlag && wasItemActiveLastFrame && !isItemActiveThisFrame)
+            {
+                if (ImGui::IsKeyPressed(ImGuiKey_Enter))
+                {
+                    enterPressed = true;
+                    textUpdated = true;
+                }
+            }
+
+            ImGui::PopStyleColor(3);
+            ImGui::PopStyleVar(2);
+
+            ImGui::SameLine();
+
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+            bool sendButtonClicked = ImGui::Button(ICON_MDI_SEND, ImVec2(28.0f, 28.0f));
+            if (sendButtonClicked)
+            {
+                enterPressed = true;
+                textUpdated = true;
+            }
+            ImGui::PopStyleVar();
+
+            if (textUpdated)
+                p_Text = std::string(buffer);
+        
+            wasItemActiveLastFrame = isItemActiveThisFrame;
+        
+            ImGui::NewLine();
+            ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX(), initialCursorPos.y + p_Height));
+            ImGui::Spacing();
+            
+            ImGui::PopID();
+            
+            return (hasEnterReturnsTrueFlag && enterPressed) || sendButtonClicked;
+        }
+
     } // namespace ImguiLayer
 
     Application::Application()
@@ -128,7 +273,7 @@ namespace JD
 
         m_Window = new Window();
 
-        ImguiLayer::Init();
+        ImguiLayer::Init(m_Window->GetDPIScale() * 14.0f);
     }
 
     Application::~Application()
@@ -149,10 +294,9 @@ namespace JD
             {
                 ImguiLayer::NewFrame();
                 {
-                    ImguiLayer::BeginDockspace("MyDockspace", "MainDockspace");
+                    ImguiLayer::BeginDockspace("MyDockspace", "MainDockspace", false, ImGuiDockNodeFlags_NoTabBar);
 
-		            ImGui::SetNextWindowDockID(ImGui::GetID("MyDockspace"), ImGuiCond_Once);
-                    ImGui::ShowDemoWindow();
+                    DrawUI();
 
                     ImguiLayer::EndDockspace();
                 }
@@ -163,6 +307,115 @@ namespace JD
             
             m_Window->PollEvents();
         }
+    }
+
+    void Application::DrawUI()
+    {
+        // TODO: Make a way to avoid recalculating these statics every frame and only when necessary
+
+        static bool s_SearchPerformed = false;
+        static std::chrono::steady_clock::time_point s_SearchStartTime;
+        static float s_AnimationProgress = 0.0f;
+
+        ImGui::SetNextWindowDockID(ImGui::GetID("MyDockspace"), ImGuiCond_Once);
+        ImGui::Begin("JurisData##UI", nullptr, ImGuiWindowFlags_NoMove);
+        {
+            ImVec2 windowSize = ImGui::GetWindowSize();
+
+            auto currentTime = std::chrono::steady_clock::now();
+            if (s_SearchPerformed)
+            {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - s_SearchStartTime).count();
+                s_AnimationProgress = std::min(elapsed / 600.0f, 1.0f);
+            }
+            else
+                s_AnimationProgress = 0.0f;
+
+            float inputTextHeight = 40.0f;
+            
+            float startWidth = windowSize.x * 0.8f;
+            float targetWidth = ImGui::GetContentRegionAvail().x;
+            
+            float easedProgress = s_AnimationProgress * s_AnimationProgress * (3.0f - 2.0f * s_AnimationProgress);
+            float currentWidth;
+            
+            if (s_SearchPerformed)
+                currentWidth = startWidth + (targetWidth - startWidth) * easedProgress;
+            else
+                currentWidth = targetWidth + (startWidth - targetWidth) * (1.0f - easedProgress);
+            
+            currentWidth = std::max(currentWidth, 100.0f);
+
+            float startY = (windowSize.y - inputTextHeight) / 2;
+            float targetY = ImGui::GetStyle().WindowPadding.y + 10.0f;
+            
+            float currentY;
+            if (s_SearchPerformed)
+                currentY = startY + (targetY - startY) * easedProgress;
+            else
+                currentY = targetY + (startY - targetY) * (1.0f - easedProgress);
+
+            ImGui::SetCursorPosY(currentY);
+            ImGui::SetCursorPosX((windowSize.x - currentWidth) / 2);
+
+            if ((s_SearchPerformed && s_AnimationProgress < 1.0f) || (!s_SearchPerformed && s_AnimationProgress > 0.0f))
+            {
+                float scale = 1.0f - (0.1f * easedProgress);
+                float alpha = 0.9f + (0.1f * (1.0f - easedProgress));
+                
+                ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+                ImGui::GetFont()->Scale = scale;
+                ImGui::PushFont(ImGui::GetFont());
+            }
+
+            auto hint = "Insira o link onde será coletado os dados!";
+            bool updated = ImguiLayer::InputText("##JDInput", m_LinkToScrape, hint, currentWidth, inputTextHeight, 6.0f, ImGuiInputTextFlags_EnterReturnsTrue);
+
+            if ((s_SearchPerformed && s_AnimationProgress < 1.0f) || (!s_SearchPerformed && s_AnimationProgress > 0.0f))
+            {
+                ImGui::PopFont();
+                ImGui::GetFont()->Scale = 1.0f;
+                ImGui::PopStyleVar();
+            }
+
+            if (updated && !m_LinkToScrape.empty() && !s_SearchPerformed)
+            {
+                s_SearchPerformed = true;
+                s_SearchStartTime = std::chrono::steady_clock::now();
+            }
+            
+            if (s_SearchPerformed || s_AnimationProgress > 0.0f)
+            {
+                float contentAlpha = std::max(0.0f, (s_AnimationProgress - 0.3f) / 0.7f);
+                
+                if (contentAlpha > 0.0f)
+                {
+                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, contentAlpha);
+                    
+                    float resultsOffset = 20.0f + (30.0f * (1.0f - contentAlpha));
+                    ImGui::SetCursorPosY(currentY + inputTextHeight + resultsOffset);
+                    
+                    ImGui::Separator();
+                    ImGui::Spacing();
+                    
+                    ImGui::Text("Resultados para: %s", m_LinkToScrape.c_str());
+                    
+                    if (contentAlpha > 0.8f)
+                    {
+                        ImGui::Spacing();
+                        if (ImGui::Button("Nova Pesquisa", ImVec2(120, 30)))
+                        {
+                            s_SearchPerformed = false;
+                            s_SearchStartTime = std::chrono::steady_clock::now();
+                            m_LinkToScrape.clear();
+                        }
+                    }
+                    
+                    ImGui::PopStyleVar();
+                }
+            }
+        }
+        ImGui::End();
     }
 
 } // namespace JD

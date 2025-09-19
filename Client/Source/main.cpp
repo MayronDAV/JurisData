@@ -78,8 +78,6 @@ int main()
     auto app = new JD::Application();
     app->Run();
     delete app;
-
-    JD::ShowErrorWindow("Teste", "Isso é um teste", false);
 #else
     int clientSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (clientSocket == -1) {
