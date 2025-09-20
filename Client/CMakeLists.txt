@@ -22,7 +22,7 @@ else()
 endif()
 
 if (WIN32)
-    add_definitions(-DUNICODE -D_UNICODE)
+    add_definitions(-DUNICODE -D_UNICODE -DNOMINMAX)
 endif()
 
 # create bin folder
@@ -59,7 +59,7 @@ if(WIN32)
 endif()
 
 if (MSVC)
-    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8 /Zc:char8_t-)
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
 else()
     target_compile_options(${PROJECT_NAME} PRIVATE -finput-charset=UTF-8 -fexec-charset=UTF-8)
 endif()

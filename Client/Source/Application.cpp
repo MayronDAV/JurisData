@@ -6,14 +6,35 @@
 #include <imgui_internal.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
+#include <nlohmann/json.hpp>
 
 // std
 #include <chrono>
+#include <iostream>
+#include <thread>
+#include <future>
+#include <atomic>
+#if defined(_WIN32)
+    #include <WinSock2.h>
+    #include <WS2tcpip.h>
+    #define close closesocket
+#else
+    #include <netinet/in.h>
+    #include <sys/socket.h>
+    #include <unistd.h>
+    #include <arpa/inet.h>
+#endif
+
+#include "Base.h"
 
 
 
 namespace JD
-{
+{   
+    static std::atomic<bool> s_IsDiscovering(false);
+    static std::atomic<bool> s_DiscoveryComplete(false);
+    static std::future<void> s_DiscoveryFuture;
+    
     namespace ImguiLayer
     {
         #include "Embed/Fonts/MaterialDesign.inl"
@@ -243,7 +264,7 @@ namespace JD
             ImGui::SameLine();
 
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-            bool sendButtonClicked = ImGui::Button(ICON_MDI_SEND, ImVec2(28.0f, 28.0f));
+            bool sendButtonClicked = ImGui::Button((const char*)ICON_MDI_SEND, ImVec2(28.0f, 28.0f));
             if (sendButtonClicked)
             {
                 enterPressed = true;
@@ -265,6 +286,45 @@ namespace JD
             return (hasEnterReturnsTrueFlag && enterPressed) || sendButtonClicked;
         }
 
+        void Spinner(const char* p_Label, float p_Radius, int p_Thickness, const ImU32& p_Color)
+        {
+            ImGuiWindow* window = ImGui::GetCurrentWindow();
+            if (window->SkipItems)
+                return;
+
+            ImGuiContext& g = *GImGui;
+            const ImGuiStyle& style = g.Style;
+            const ImGuiID id = window->GetID(p_Label);
+
+            ImVec2 pos = window->DC.CursorPos;
+            ImVec2 size(p_Radius * 2, (p_Radius + style.FramePadding.y) * 2);
+
+            const ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
+            ImGui::ItemSize(bb, style.FramePadding.y);
+            if (!ImGui::ItemAdd(bb, id))
+                return;
+
+            // Render
+            window->DrawList->PathClear();
+
+            int num_segments = 30;
+            float start = abs(ImSin(g.Time * 1.8f) * (num_segments - 5));
+
+            const float a_min = IM_PI * 2.0f * start / num_segments;
+            const float a_max = IM_PI * 2.0f * ((float)num_segments - 3) / num_segments;
+
+            const ImVec2 centre = ImVec2(pos.x + p_Radius, pos.y + p_Radius + style.FramePadding.y);
+
+            for (int i = 0; i < num_segments; i++)
+            {
+                const float a = a_min + ((float)i / (float)num_segments) * (a_max - a_min);
+                window->DrawList->PathLineTo(ImVec2(centre.x + ImCos(a + g.Time * 8) * p_Radius,
+                                                    centre.y + ImSin(a + g.Time * 8) * p_Radius));
+            }
+
+            window->DrawList->PathStroke(p_Color, false, p_Thickness);
+        }
+
     } // namespace ImguiLayer
 
     Application::Application()
@@ -274,14 +334,41 @@ namespace JD
         m_Window = new Window();
 
         ImguiLayer::Init(m_Window->GetDPIScale() * 14.0f);
+
+        m_Socket = socket(AF_INET, SOCK_STREAM, 0);
+        if (m_Socket == -1)
+        {
+            ShowErrorWindow("Socket Error", "Falha ao tentar criar o socket!", true);
+            return;
+        }
+
+        sockaddr_in serverAddress;
+        serverAddress.sin_family = AF_INET;
+        serverAddress.sin_port = htons(8082);
+        inet_pton(AF_INET, "127.0.0.1", &serverAddress.sin_addr);
+
+        if (connect(m_Socket, (struct sockaddr*)&serverAddress, sizeof(serverAddress)) == -1) 
+        {
+            close(m_Socket);
+            ShowErrorWindow("Socket Error", "Falha ao tentar conectar ao Servidor!", true);
+        }
     }
 
     Application::~Application()
     {
-        ImguiLayer::Shutdown();
+        s_IsDiscovering = false;
+        s_DiscoveryComplete = false;
 
+        if (s_DiscoveryFuture.valid())
+            s_DiscoveryFuture.wait();
+    
+        ImguiLayer::Shutdown();
+        
         if (m_Window)
             delete m_Window;
+
+        if (m_Socket != -1)
+            close(m_Socket);
 
         s_Instance = nullptr;
     }
@@ -309,11 +396,27 @@ namespace JD
         }
     }
 
+    void Application::ResetSearch()
+    {
+        m_SearchPerformed = false;
+        m_LinkToScrape.clear();   
+
+        s_IsDiscovering = false;
+        s_DiscoveryComplete = false;
+        
+        if (s_DiscoveryFuture.valid())
+            s_DiscoveryFuture.wait();
+
+        {
+            //std::scoped_lock<std::mutex> lock(m_DataMutex);
+            m_AvailableClasses.clear();
+        }
+    }
+
     void Application::DrawUI()
     {
         // TODO: Make a way to avoid recalculating these statics every frame and only when necessary
 
-        static bool s_SearchPerformed = false;
         static std::chrono::steady_clock::time_point s_SearchStartTime;
         static float s_AnimationProgress = 0.0f;
 
@@ -323,7 +426,7 @@ namespace JD
             ImVec2 windowSize = ImGui::GetWindowSize();
 
             auto currentTime = std::chrono::steady_clock::now();
-            if (s_SearchPerformed)
+            if (m_SearchPerformed)
             {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - s_SearchStartTime).count();
                 s_AnimationProgress = std::min(elapsed / 600.0f, 1.0f);
@@ -339,7 +442,7 @@ namespace JD
             float easedProgress = s_AnimationProgress * s_AnimationProgress * (3.0f - 2.0f * s_AnimationProgress);
             float currentWidth;
             
-            if (s_SearchPerformed)
+            if (m_SearchPerformed)
                 currentWidth = startWidth + (targetWidth - startWidth) * easedProgress;
             else
                 currentWidth = targetWidth + (startWidth - targetWidth) * (1.0f - easedProgress);
@@ -350,7 +453,7 @@ namespace JD
             float targetY = ImGui::GetStyle().WindowPadding.y + 10.0f;
             
             float currentY;
-            if (s_SearchPerformed)
+            if (m_SearchPerformed)
                 currentY = startY + (targetY - startY) * easedProgress;
             else
                 currentY = targetY + (startY - targetY) * (1.0f - easedProgress);
@@ -358,7 +461,7 @@ namespace JD
             ImGui::SetCursorPosY(currentY);
             ImGui::SetCursorPosX((windowSize.x - currentWidth) / 2);
 
-            if ((s_SearchPerformed && s_AnimationProgress < 1.0f) || (!s_SearchPerformed && s_AnimationProgress > 0.0f))
+            if ((m_SearchPerformed && s_AnimationProgress < 1.0f) || (!m_SearchPerformed && s_AnimationProgress > 0.0f))
             {
                 float scale = 1.0f - (0.1f * easedProgress);
                 float alpha = 0.9f + (0.1f * (1.0f - easedProgress));
@@ -371,51 +474,210 @@ namespace JD
             auto hint = "Insira o link onde será coletado os dados!";
             bool updated = ImguiLayer::InputText("##JDInput", m_LinkToScrape, hint, currentWidth, inputTextHeight, 6.0f, ImGuiInputTextFlags_EnterReturnsTrue);
 
-            if ((s_SearchPerformed && s_AnimationProgress < 1.0f) || (!s_SearchPerformed && s_AnimationProgress > 0.0f))
+            if ((m_SearchPerformed && s_AnimationProgress < 1.0f) || (!m_SearchPerformed && s_AnimationProgress > 0.0f))
             {
                 ImGui::PopFont();
                 ImGui::GetFont()->Scale = 1.0f;
                 ImGui::PopStyleVar();
             }
 
-            if (updated && !m_LinkToScrape.empty() && !s_SearchPerformed)
+            if (updated && !m_LinkToScrape.empty() && !m_SearchPerformed)
             {
-                s_SearchPerformed = true;
+                m_SearchPerformed = true;
                 s_SearchStartTime = std::chrono::steady_clock::now();
+
+                DiscoverClasses(m_LinkToScrape);
             }
             
-            if (s_SearchPerformed || s_AnimationProgress > 0.0f)
+            if (m_SearchPerformed || s_AnimationProgress > 0.0f)
             {
-                float contentAlpha = std::max(0.0f, (s_AnimationProgress - 0.3f) / 0.7f);
-                
-                if (contentAlpha > 0.0f)
-                {
-                    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, contentAlpha);
-                    
-                    float resultsOffset = 20.0f + (30.0f * (1.0f - contentAlpha));
-                    ImGui::SetCursorPosY(currentY + inputTextHeight + resultsOffset);
-                    
-                    ImGui::Separator();
-                    ImGui::Spacing();
-                    
-                    ImGui::Text("Resultados para: %s", m_LinkToScrape.c_str());
-                    
-                    if (contentAlpha > 0.8f)
-                    {
-                        ImGui::Spacing();
-                        if (ImGui::Button("Nova Pesquisa", ImVec2(120, 30)))
-                        {
-                            s_SearchPerformed = false;
-                            s_SearchStartTime = std::chrono::steady_clock::now();
-                            m_LinkToScrape.clear();
-                        }
-                    }
-                    
-                    ImGui::PopStyleVar();
-                }
+                if (s_IsDiscovering)
+                    DrawLoadingSpinner();
+                else if (s_DiscoveryComplete)
+                    DrawResultsUI();
             }
         }
         ImGui::End();
     }
 
+    void Application::DrawResultsUI()
+    {
+        if (!s_DiscoveryComplete) return;
+    
+        std::scoped_lock<std::mutex> lock(m_DataMutex);
+        
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 20);
+        
+        if (m_AvailableClasses.empty())
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Nenhuma classe encontrada no site.");
+        }
+        else
+        {
+            ImGui::Text("Classes disponíveis no site:");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            for (auto& classInfo : m_AvailableClasses)
+            {
+                ImGui::PushID(classInfo.CssClass.c_str());
+                
+                if (ImGui::TreeNode(classInfo.CssClass.c_str()))
+                {
+                    ImGui::Text("Tag: %s", classInfo.TagName.c_str());
+                    ImGui::Text("Elementos: %d", classInfo.ElementCount);
+                    ImGui::Text("Exemplo: %s", classInfo.ExampleContent.c_str());
+                    ImGui::Text("XPath: %s", classInfo.SuggestedXPath.c_str());
+                    ImGui::TreePop();
+                }
+                
+                ImGui::PopID();
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Nova Pesquisa", ImVec2(150, 40)))
+        {
+            ResetSearch();
+        }
+
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Exportar Resultados", ImVec2(150, 40)))
+        {
+            // TODO: Implementar exportação
+        }
+    }
+
+    void Application::DrawLoadingSpinner()
+    {
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 50);
+        
+        ImVec2 windowSize = ImGui::GetWindowSize();
+        float spinnerX = (windowSize.x - 60) / 2;
+        ImGui::SetCursorPosX(spinnerX);
+        
+        ImguiLayer::Spinner("##loading-spinner", 30, 6, IM_COL32(100, 200, 255, 255));
+
+        const char* text = "Analisando site...";
+        ImVec2 size = ImGui::CalcTextSize(text);        
+        ImGui::SetCursorPosX((windowSize.x - size.x) / 2);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 40);
+        ImGui::Text(text);
+        
+        text = "Procurando por classes CSS...";
+        size = ImGui::CalcTextSize(text);   
+        ImGui::SetCursorPosX((windowSize.x - size.x) / 2);
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 10);
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), text);
+    }
+
+    bool Application::SendRequest(const json &p_Request)
+    {
+        if (m_Socket == -1) return false;
+
+        std::string requestStr = p_Request.dump();
+        int bytesSent = send(m_Socket, requestStr.c_str(), requestStr.length(), 0);
+        
+        if (bytesSent == -1) 
+        {
+            std::cerr << "Erro ao enviar dados: " << strerror(errno) << std::endl;
+            return false;
+        }
+        
+        return true;
+    }
+
+    json Application::ReceiveResponse()
+    {
+        if (m_Socket == -1) return json();
+
+        char buffer[4096];
+        int bytesReceived = recv(m_Socket, buffer, sizeof(buffer) - 1, 0);
+        
+        if (bytesReceived == -1)
+        {
+            std::cerr << "Erro ao receber dados: " << strerror(errno) << std::endl;
+            return json();
+        }
+        
+        if (bytesReceived == 0)
+        {
+            std::cout << "Conexão fechada pelo servidor" << std::endl;
+            return json();
+        }     
+        buffer[bytesReceived] = '\0';
+        
+        try 
+        {
+            return json::parse(buffer);
+        }
+        catch (const std::exception& e)
+        {
+            std::cerr << "Erro ao parsear JSON: " << e.what() << std::endl;
+            return json();
+        }
+    }
+
+    void Application::DiscoverClasses(const std::string &p_URL)
+    {
+        s_IsDiscovering = true;
+        s_DiscoveryComplete = false;
+        
+        s_DiscoveryFuture = std::async(std::launch::async, [this, p_URL]()
+        {
+            try
+            {
+                if (!s_IsDiscovering) return;
+                
+                json request = {
+                    {"type", "scrape_request"},
+                    {"url", p_URL}
+                };
+
+                if (SendRequest(request))
+                {
+                    if (!s_IsDiscovering) return;
+                    
+                    json response = ReceiveResponse();
+                    
+                    if (!s_IsDiscovering) return;
+                    
+                    if (!response.empty() && response["success"] == true)
+                    {
+                        std::lock_guard<std::mutex> lock(m_DataMutex);
+                        if (!s_IsDiscovering) return;
+                        
+                        m_ServerResponse = response;
+                        
+                        m_AvailableClasses.clear();
+                        auto content = m_ServerResponse["content"];
+                        if (content.contains("available_classes"))
+                        {
+                            for (const auto& classInfo : content["available_classes"])
+                            {
+                                ClassInfo info;
+                                info.CssClass = classInfo["css_class"];
+                                info.ExampleContent = classInfo["example_content"];
+                                info.TagName = classInfo["tag_name"];
+                                info.ElementCount = classInfo["element_count"];
+                                info.SuggestedXPath = classInfo["suggested_xpath"];
+                                m_AvailableClasses.push_back(info);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (const std::exception& e) 
+            {
+                std::cerr << "Erro no discovery assíncrono: " << e.what() << std::endl;
+            }
+            
+            s_IsDiscovering = false;
+            s_DiscoveryComplete = true;
+        });
+    }
 } // namespace JD
