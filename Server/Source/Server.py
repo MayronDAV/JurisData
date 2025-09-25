@@ -3,6 +3,66 @@ import json
 import time
 import threading
 from typing import Dict, Any, List, Optional
+import sys
+import tempfile, os
+import multiprocessing
+from multiprocessing import Queue, Process
+
+
+
+try:
+    from scrapy.crawler import CrawlerProcess
+    from scrapy.utils.project import get_project_settings
+    from scrapy import signals
+except ImportError as e:
+    print(f"[-] ERRO CRÍTICO: Scrapy não está instalado ou não pode ser importado: {e}")
+    print("[-] Instale com: pip install scrapy twisted")
+    sys.exit(1)
+
+try:
+    from ClassDiscoverer import ClassDiscovererSpider
+except ImportError as e:
+    print(f"[-] ERRO CRÍTICO: Não foi possível importar módulos do Scraper: {e}")
+    sys.exit(1)
+
+
+
+class ScrapyWorker:
+    @staticmethod
+    def RunScrapy(p_Url: str, p_ResultQueue: Queue):
+        try:
+            settings = get_project_settings()
+            settings.set('LOG_ENABLED', False)
+            settings.set('LOG_LEVEL', 'ERROR')
+            process = CrawlerProcess(settings)
+
+            results = []    
+            def collect_results(item, response, spider):
+                results.append(item)
+            
+            process.crawl(ClassDiscovererSpider, p_Url=p_Url)
+            for crawler in list(process.crawlers):
+                crawler.signals.connect(collect_results, signal=signals.item_scraped)
+
+            process.start()
+
+            if not results:
+                raise Exception("Nenhum resultado coletado pelo Scrapy")
+            
+            if len(results).to_bytes() > bytes(4096):
+                fd, temp_path = tempfile.mkstemp(suffix=".json")
+                os.close(fd)
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    json.dump(results[0], f, ensure_ascii=False)
+
+                print(f"[+] Resultados muito grandes, salvos em arquivo temporário: {temp_path}")
+                p_ResultQueue.put({'success': True, 'file': temp_path })
+            else:
+                p_ResultQueue.put({'success': True, 'data': results[0] })
+            
+        except Exception as e:
+            p_ResultQueue.put({'success': False, 'error': str(e)})
+
 
 class Server:
     def __init__(self, p_Host="localhost", p_Port=8082):
@@ -25,29 +85,73 @@ class Server:
     
     def ScrapeDiscoveryPhase(self, p_Url: str) -> Dict[str, Any]:
         print(f"[DISCOVERY] Analisando site: {p_Url}")
+        
+        result_queue = Queue()
+        scrapy_process = Process(
+            target=ScrapyWorker.RunScrapy,
+            args=(p_Url, result_queue)
+        )
+        
+        scrapy_process.start()
+        scrapy_process.join(timeout=120)
+        
+        if scrapy_process.is_alive():
+            scrapy_process.terminate()
+            scrapy_process.join()
+            raise Exception("Timeout no scraping (120 segundos)")
+        
+        if result_queue.empty():
+            raise Exception("Nenhum resultado do processo de scraping")
+        
+        result = result_queue.get()
+        
+        if not result['success']:
+            raise Exception(result.get('error', 'Erro desconhecido no scraping'))
+        
+        discovery_data = {}
+        if 'file' in result:
+            with open(result['file'], 'r', encoding='utf-8') as f:
+                discovery_data = json.load(f)
+            os.remove(result['file'])
+        elif 'data' in result:
+            discovery_data = result['data']
+        else:
+            raise Exception(result.get('error', 'Resultado de scraping inválido'))
 
-        time.sleep(2)
+        print(f"[DISCOVERY] Dados coletados: {len(discovery_data.get('classes', {}))} classes, {len(discovery_data.get('ids', {}))} ids")
         
         return {
             "url": p_Url,
-            "available_classes": [
-                {
-                    "css_class": "docTexto",
-                    "example_content": "Art. 1º Esta Lei regula o direito...",
-                    "tag_name": "p",
-                    "element_count": 45,
-                    "suggested_xpath": "//*[contains(concat(' ',@class,' '), concat(' ','docTexto',' '))]"
-                },
-                {
-                    "css_class": "docTitulo", 
-                    "example_content": "Ementa",
-                    "tag_name": "p",
-                    "element_count": 1,
-                    "suggested_xpath": "//*[contains(concat(' ',@class,' '), concat(' ','docTitulo',' '))]"
-                }
-            ]
+            "available_classes": self.FormatScrapyResults(discovery_data),
+            "scrapy_used": True,
+            "success": True
         }
     
+    def FormatScrapyResults(self, p_ScrapyData):
+        formatted_classes = []
+        
+        if 'ids' in p_ScrapyData:
+            for id_name, id_info in p_ScrapyData['ids'].items():
+                formatted_classes.append({
+                    "css_class": f"#{id_name}",
+                    "example_content": id_info.get('text', '')[:200],
+                    "tag_name": id_info.get('tag', ''),
+                    "element_count": id_info.get('element_count', 1),
+                    "suggested_xpath": id_info.get('xpath', '')
+                })
+
+        if 'classes' in p_ScrapyData:
+            for class_name, class_info in p_ScrapyData['classes'].items():
+                formatted_classes.append({
+                    "css_class": class_name,
+                    "example_content": class_info.get('text', '')[:200],
+                    "tag_name": class_info.get('tag', ''),
+                    "element_count": class_info.get('element_count', 1),
+                    "suggested_xpath": class_info.get('xpath', '')
+                })
+        
+        return formatted_classes
+
     def ScrapeTargetedPhase(self, p_Url: str, p_Targets: Optional[List[str]] = None, p_XPathSelectors: Optional[List[str]] = None) -> Dict[str, Any]:
         print(f"[TARGETED] Extraindo conteúdo de: {p_Url}")
         print(f"Classes alvo: {p_Targets}")
@@ -61,21 +165,9 @@ class Server:
                 results.append({
                     "css_class": css_class,
                     "content": [
-                        f"Conteúdo exemplo 1 da classe {css_class}",
-                        f"Conteúdo exemplo 2 da classe {css_class}",
-                        f"Conteúdo exemplo 3 da classe {css_class}"
-                    ],
-                    "items_found": 3
-                })
-        
-        if p_XPathSelectors:
-            for xpath in p_XPathSelectors:
-                results.append({
-                    "xpath_selector": xpath,
-                    "content": [
-                        f"Conteúdo exemplo 1 do XPath {xpath}",
-                        f"Conteúdo exemplo 2 do XPath {xpath}",
-                        f"Conteúdo exemplo 3 do XPath {xpath}"
+                        f"Conteúdo real 1 da classe {css_class}",
+                        f"Conteúdo real 2 da classe {css_class}",
+                        f"Conteúdo real 3 da classe {css_class}"
                     ],
                     "items_found": 3
                 })
@@ -84,7 +176,8 @@ class Server:
             "url": p_Url,
             "results": results,
             "total_items": len(results) * 3,
-            "scrape_timestamp": time.time()
+            "scrape_timestamp": time.time(),
+            "scrapy_used": False
         }
     
     def HandleScrapeRequest(self, p_Client, p_JsonData: Dict[str, Any]) -> None:
@@ -268,10 +361,14 @@ class Server:
                     client.close()
                 except:
                     pass
+        
         self.ServerSocket.close()
         print("[-] Servidor parado")
 
-if __name__ == "__main__":
+def main():
+    if sys.platform.startswith('win'):
+        multiprocessing.freeze_support()
+
     server = Server()
     try:
         server.Start()
@@ -279,3 +376,6 @@ if __name__ == "__main__":
         print("\n[-] Servidor interrompido pelo usuário.")
     finally:
         server.Stop()
+
+if __name__ == "__main__":
+    main()

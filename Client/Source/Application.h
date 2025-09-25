@@ -42,6 +42,7 @@ namespace JD
 
             bool SendRequest(const json& p_Request);
             json ReceiveResponse();
+            bool IsCompleteJson(const std::string& p_JsonStr);
             void DiscoverClasses(const std::string& p_URL);
 
         private:

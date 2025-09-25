@@ -595,31 +595,77 @@ namespace JD
     {
         if (m_Socket == -1) return json();
 
-        char buffer[4096];
-        int bytesReceived = recv(m_Socket, buffer, sizeof(buffer) - 1, 0);
+        std::vector<char> buffer(4096);
+        std::string fullResponse;
         
-        if (bytesReceived == -1)
+        while (true)
         {
-            std::cerr << "Erro ao receber dados: " << strerror(errno) << std::endl;
-            return json();
+            int bytesReceived = recv(m_Socket, buffer.data(), buffer.size() - 1, 0);
+            
+            if (bytesReceived == -1)
+            {
+                std::cerr << "Erro ao receber dados: " << strerror(errno) << std::endl;
+                return json();
+            }
+            
+            if (bytesReceived == 0)
+            {
+                std::cout << "Conexão fechada pelo servidor" << std::endl;
+                break;
+            }
+
+            buffer[bytesReceived] = '\0';
+            fullResponse.append(buffer.data(), bytesReceived);
+            
+            if (IsCompleteJson(fullResponse))
+                break;
+
+            if (bytesReceived == static_cast<int>(buffer.size()) - 1)
+                buffer.resize(buffer.size() * 2);
         }
-        
-        if (bytesReceived == 0)
-        {
-            std::cout << "Conexão fechada pelo servidor" << std::endl;
-            return json();
-        }     
-        buffer[bytesReceived] = '\0';
         
         try 
         {
-            return json::parse(buffer);
+            if (!fullResponse.empty())
+            {
+                return json::parse(fullResponse);
+            }
+            return json();
         }
         catch (const std::exception& e)
         {
             std::cerr << "Erro ao parsear JSON: " << e.what() << std::endl;
+            std::cerr << "Dados recebidos (" << fullResponse.size() << " bytes): " << fullResponse.substr(0, 500) << "..." << std::endl;
             return json();
         }
+    }
+
+    bool Application::IsCompleteJson(const std::string& p_JsonStr)
+    {
+        int braceCount = 0;
+        int bracketCount = 0;
+        bool inString = false;
+        char lastChar = 0;
+        
+        for (char c : p_JsonStr)
+        {
+            if (!inString)
+            {
+                if (c == '{') braceCount++;
+                else if (c == '}') braceCount--;
+                else if (c == '[') bracketCount++;
+                else if (c == ']') bracketCount--;
+                else if (c == '"' && lastChar != '\\') inString = true;
+            }
+            else
+            {
+                if (c == '"' && lastChar != '\\') inString = false;
+            }
+            
+            lastChar = c;
+        }
+        
+        return !inString && braceCount == 0 && bracketCount == 0;
     }
 
     void Application::DiscoverClasses(const std::string &p_URL)

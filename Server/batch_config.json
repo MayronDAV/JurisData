@@ -1,13 +1,64 @@
 {
-    "scripts": [
-        "Source/Server.py"
+  "scripts": ["Source/Server.py"],
+  "config": {
+    "onefile": true,
+    "noconsole": false,
+    "clean_build": true,
+    "name": "JurisDataServer",
+    "output_dir": "bin",
+    "build_dir": "../build",
+    "hidden_imports": [
+      "scrapy",
+      "parsel",
+      "w3lib",
+      "queuelib",
+      "protego",
+      "cssselect",
+      "lxml",
+      "lxml.etree",
+      "lxml._elementpath",
+      "lxml.html",
+      "lxml.html.clean",
+      "lxml.builder",
+      "twisted",
+      "zope.interface",
+      "service_identity",
+      "cryptography",
+      "pyasn1",
+      "idna",
+      "OpenSSL"
     ],
-    "config": {
-        "name": "JurisDataServer",
-        "onefile": true,
-        "noconsole": false,
-        "console": true,
-        "output_dir": "bin",
-        "build_dir": "../build"
-    }
+    "collect_metadata": [
+      "scrapy",
+      "parsel",
+      "w3lib",
+      "queuelib",
+      "protego",
+      "cssselect",
+      "lxml",
+      "twisted",
+      "zope.interface",
+      "service_identity",
+      "cryptography",
+      "pyasn1",
+      "idna"
+    ],
+    "collect_submodules": [
+      "scrapy",
+      "parsel",
+      "w3lib",
+      "queuelib",
+      "protego",
+      "cssselect",
+      "lxml",
+      "twisted"
+    ],
+    "exclude_modules": [
+        "twisted.trial",
+        "hypothesis"
+    ],
+    "add_data": [
+        "Source/ClassDiscoverer;ClassDiscoverer"
+    ]
+  }
 }
