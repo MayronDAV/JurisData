@@ -409,7 +409,8 @@ namespace JD
 
         {
             //std::scoped_lock<std::mutex> lock(m_DataMutex);
-            m_AvailableClasses.clear();
+            m_Classes.clear();
+            m_OtherDatas.clear();
         }
     }
 
@@ -508,31 +509,74 @@ namespace JD
         
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 20);
         
-        if (m_AvailableClasses.empty())
+        if (m_Classes.empty())
         {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Nenhuma classe encontrada no site.");
         }
         else
         {
-            ImGui::Text("Classes disponíveis no site:");
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            for (auto& classInfo : m_AvailableClasses)
+            if (ImGui::TreeNodeEx("Classes disponíveis no site:", ImGuiTreeNodeFlags_DefaultOpen))
             {
-                ImGui::PushID(classInfo.CssClass.c_str());
-                
-                if (ImGui::TreeNode(classInfo.CssClass.c_str()))
+                ImGui::Separator();
+                ImGui::Spacing();
+    
+                for (auto& classInfo : m_Classes)
                 {
-                    ImGui::Text("Tag: %s", classInfo.TagName.c_str());
-                    ImGui::Text("Elementos: %d", classInfo.ElementCount);
-                    ImGui::Text("Exemplo: %s", classInfo.ExampleContent.c_str());
-                    ImGui::Text("XPath: %s", classInfo.SuggestedXPath.c_str());
-                    ImGui::TreePop();
+                    ImGui::PushID(classInfo.CssClass.c_str());
+                    
+                    if (ImGui::TreeNode(classInfo.CssClass.c_str()))
+                    {
+                        ImGui::Text("Tag: %s", classInfo.TagName.c_str());
+                        ImGui::Text("Elementos: %d", classInfo.ElementCount);
+                        ImGui::Text("Exemplo: %s", classInfo.ExampleContent.c_str());
+                        ImGui::Text("XPath: %s", classInfo.SuggestedXPath.c_str());
+                        ImGui::Text("IsLink: %s", classInfo.IsLink ? "Sim" : "Não");
+                        ImGui::TreePop();
+                    }
+                    
+                    ImGui::PopID();
                 }
-                
-                ImGui::PopID();
+
+                ImGui::TreePop();
             }
+
+            ImGui::Spacing();
+        }
+        
+        ImGui::Separator();
+
+        if (m_OtherDatas.empty())
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Nenhum outro dado encontrado no site.");
+        }
+        else
+        {
+            if (ImGui::TreeNode("Outros dados disponíveis no site:"))
+            {
+                ImGui::Separator();
+                ImGui::Spacing();
+    
+                for (auto& dataInfo : m_OtherDatas)
+                {
+                    ImGui::PushID(dataInfo.CssClass.c_str());
+                    
+                    if (ImGui::TreeNode(dataInfo.CssClass.empty() ? "(sem classe)" : dataInfo.CssClass.c_str()))
+                    {
+                        ImGui::Text("Tag: %s", dataInfo.TagName.c_str());
+                        ImGui::Text("Elementos: %d", dataInfo.ElementCount);
+                        ImGui::Text("Exemplo: %s", dataInfo.ExampleContent.c_str());
+                        ImGui::Text("XPath: %s", dataInfo.SuggestedXPath.c_str());
+                        ImGui::Text("IsLink: %s", dataInfo.IsLink ? "Sim" : "Não");
+                        ImGui::TreePop();
+                    }
+                    
+                    ImGui::PopID();
+                }
+
+                ImGui::TreePop();
+            }
+
+            ImGui::Spacing();
         }
 
         ImGui::Spacing();
@@ -699,11 +743,12 @@ namespace JD
                         
                         m_ServerResponse = response;
                         
-                        m_AvailableClasses.clear();
+                        m_Classes.clear();
+                        m_OtherDatas.clear();
                         auto content = m_ServerResponse["content"];
-                        if (content.contains("available_classes"))
+                        if (content.contains("classes"))
                         {
-                            for (const auto& classInfo : content["available_classes"])
+                            for (const auto& classInfo : content["classes"])
                             {
                                 ClassInfo info;
                                 info.CssClass = classInfo["css_class"];
@@ -711,7 +756,22 @@ namespace JD
                                 info.TagName = classInfo["tag_name"];
                                 info.ElementCount = classInfo["element_count"];
                                 info.SuggestedXPath = classInfo["suggested_xpath"];
-                                m_AvailableClasses.push_back(info);
+                                info.IsLink = classInfo["is_link"];
+                                m_Classes.push_back(info);
+                            }
+                        }
+                        if (content.contains("other_datas"))
+                        {
+                            for (const auto& dataInfo : content["other_datas"])
+                            {
+                                ClassInfo info;
+                                info.CssClass = dataInfo["css_class"];
+                                info.ExampleContent = dataInfo["example_content"];
+                                info.TagName = dataInfo["tag_name"];
+                                info.ElementCount = dataInfo["element_count"];
+                                info.SuggestedXPath = dataInfo["suggested_xpath"];
+                                info.IsLink = dataInfo["is_link"];
+                                m_OtherDatas.push_back(info);
                             }
                         }
                     }

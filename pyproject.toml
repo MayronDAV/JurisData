@@ -16,14 +16,16 @@ requires-python = ">=3.8"
 dependencies = [
     "Scrapy>=2.11.0",
     "Twisted>=22.10.0",
-    "PyInstaller>=6.15.0"
+    "PyInstaller>=6.15.0",
+    "scrapy-playwright>=0.0.44",
+    "Playwright>=1.15"
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.3.1",
     "pytest-asyncio>=0.21.0",
-    "pytest-twisted>=1.14.0",
+    "pytest-twisted>=1.14.0"
 ]
 
 [tool.setuptools]

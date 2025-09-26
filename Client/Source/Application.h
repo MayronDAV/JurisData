@@ -20,6 +20,7 @@ namespace JD
         std::string TagName;
         int ElementCount;
         std::string SuggestedXPath;
+        bool IsLink = false;
     };
 
     class Application
@@ -53,7 +54,8 @@ namespace JD
             int m_Socket = -1;
             json m_ServerResponse = {};
             std::mutex m_DataMutex;
-            std::vector<ClassInfo> m_AvailableClasses;
+            std::vector<ClassInfo> m_Classes;
+            std::vector<ClassInfo> m_OtherDatas;
 
             static inline Application* s_Instance = nullptr;
     };
