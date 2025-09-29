@@ -14,10 +14,11 @@
 #include <thread>
 #include <future>
 #include <atomic>
+#include <fstream>
 #if defined(_WIN32)
     #include <WinSock2.h>
     #include <WS2tcpip.h>
-    #define close closesocket
+    int close(SOCKET s) { return closesocket(s); }
 #else
     #include <netinet/in.h>
     #include <sys/socket.h>
@@ -31,8 +32,8 @@
 
 namespace JD
 {   
-    static std::atomic<bool> s_IsDiscovering(false);
-    static std::atomic<bool> s_DiscoveryComplete(false);
+    static std::atomic<bool> s_IsLoading(false);
+    static std::atomic<bool> s_LoadingComplete(false);
     static std::future<void> s_DiscoveryFuture;
     
     namespace ImguiLayer
@@ -352,12 +353,50 @@ namespace JD
             close(m_Socket);
             ShowErrorWindow("Socket Error", "Falha ao tentar conectar ao Servidor!", true);
         }
+
+        std::ifstream file("LinkConfigs.json");
+        if (file.is_open())
+        {
+            m_LinkConfigs = json::parse(file);
+            file.close();
+        }
+        else
+        {
+            auto& config = m_LinkConfigs["default"];
+            // group type: unique, multiple ( with an explicit limit, e.g: {"multiple", 2}), all
+            config["groups"]["dados"] = { {"type", "all"}, {"members", 
+                json::array({
+                    "regex:.*assunto.*",
+                    "regex:.*data.*",
+                    "regex:.*incidente.*",
+                    "regex:.*link.*",
+                    "regex:.*movimentacao.*",
+                    "regex:.*parte.*",
+                    "regex:.*processo.*",
+                    "regex:.*doc.*",
+                    "group:documentos"
+                })}
+            };
+            config["groups"]["documentos"] = { {"type", "unique"}, {"members", json::array({ "regex:.*doc.*" })} };
+
+            auto& stags = config["selected_tags"];
+            stags["regex:.*link.*"] = { {"follow_link", true} };
+            stags["regex:.*doc.*"] = json::object();
+            stags["regex:.*processo.*"] = json::object();
+            stags["regex:.*parte.*"] = json::object();
+            stags["regex:.*assunto.*"] = json::object();
+            stags["regex:.*movimentacao.*"] = json::object();
+            stags["regex:.*data.*"] = json::object();
+            stags["regex:.*incidente.*"] = json::object();
+
+            SaveLinkConfigs();
+        }
     }
 
     Application::~Application()
     {
-        s_IsDiscovering = false;
-        s_DiscoveryComplete = false;
+        s_IsLoading = false;
+        s_LoadingComplete = false;
 
         if (s_DiscoveryFuture.valid())
             s_DiscoveryFuture.wait();
@@ -401,8 +440,8 @@ namespace JD
         m_SearchPerformed = false;
         m_LinkToScrape.clear();   
 
-        s_IsDiscovering = false;
-        s_DiscoveryComplete = false;
+        s_IsLoading = false;
+        s_LoadingComplete = false;
         
         if (s_DiscoveryFuture.valid())
             s_DiscoveryFuture.wait();
@@ -487,15 +526,93 @@ namespace JD
                 m_SearchPerformed = true;
                 s_SearchStartTime = std::chrono::steady_clock::now();
 
-                DiscoverClasses(m_LinkToScrape);
+                m_CurrentLinkConfig = ResolveConfig(m_LinkToScrape);
+
+                if (!m_LinkConfigs.contains(m_LinkToScrape))
+                {
+                    std::string base = NormalizeURL(m_LinkToScrape);
+                    for (auto& [link, config] : m_LinkConfigs.items())
+                    {
+                        if (NormalizeURL(link) == base)
+                        {
+                            m_SimilarConfigLink = link;
+                            m_HasSimilarConfig = true;
+                            break;
+                        }
+                    }
+
+                    ImGui::OpenPopup("ConfigPopup");
+                }
             }
-            
+
+            if (ImGui::BeginPopupModal("ConfigPopup", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::Text("Configuração para o link não encontrada!");
+                ImGui::Text("Deseja configurar agora?");
+                if (m_HasSimilarConfig)
+                {
+                    ImGui::TextColored(ImVec4(1, 1, 0, 1), "Encontramos uma configuração similar para este site:");
+                    ImGui::Text("%s", m_SimilarConfigLink.c_str());
+                    ImGui::Spacing();
+                    ImGui::Separator();
+
+                    if (ImGui::Button("Usar configuração existente"))
+                    {
+                        m_LinkConfigs[m_LinkToScrape] = {
+                            {"use_config", m_SimilarConfigLink}
+                        };
+                        m_CurrentLinkConfig = m_LinkConfigs[m_SimilarConfigLink];
+                        SaveLinkConfigs();
+                        ImGui::CloseCurrentPopup();
+                    }
+
+                    ImGui::SameLine();
+
+                    if (ImGui::Button("Criar nova configuração"))
+                    {
+                        m_ConfigLink = true;
+                        DiscoverClasses(m_LinkToScrape);
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+                else
+                {
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    
+                    if (ImGui::Button("Sim"))
+                    {
+                        m_ConfigLink = true;
+                        DiscoverClasses(m_LinkToScrape);
+                        ImGui::CloseCurrentPopup();
+                    }
+                }                
+
+                ImGui::SameLine();
+
+                if (ImGui::Button("Não"))
+                {
+                    m_ConfigLink = false;
+                    m_CurrentLinkConfig = m_LinkConfigs["default"];
+                    m_LinkConfigs[m_LinkToScrape] = m_CurrentLinkConfig;
+                    SaveLinkConfigs();
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+
             if (m_SearchPerformed || s_AnimationProgress > 0.0f)
             {
-                if (s_IsDiscovering)
+                if (s_IsLoading)
                     DrawLoadingSpinner();
-                else if (s_DiscoveryComplete)
-                    DrawResultsUI();
+                else if (s_LoadingComplete)
+                {
+                    if (m_ConfigLink)
+                        DrawConfigLink();
+                    else
+                        DrawResultsUI();
+                }
             }
         }
         ImGui::End();
@@ -503,7 +620,7 @@ namespace JD
 
     void Application::DrawResultsUI()
     {
-        if (!s_DiscoveryComplete) return;
+        if (!s_LoadingComplete) return;
     
         std::scoped_lock<std::mutex> lock(m_DataMutex);
         
@@ -619,6 +736,481 @@ namespace JD
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), text);
     }
 
+    void Application::DrawConfigLink()
+    {
+        if (!s_LoadingComplete) return;
+
+        std::scoped_lock<std::mutex> lock(m_DataMutex);
+
+        ImGui::Text("Configuração para o link: %s", m_LinkToScrape.c_str());
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        static std::unordered_map<std::string, bool> s_SelectedTags;
+        static std::unordered_map<std::string, std::vector<std::string>> s_SelectedGroups;
+        
+        static bool s_IsEditingGroup = false;
+        static std::string s_EditingGroupName = "";
+        static char s_GroupNameBuffer[64] = "";
+        static int s_GroupType = 0;
+        static int s_MultipleLimit = 2;
+
+        static bool s_InitialLoad = true;
+        if (s_InitialLoad)
+        {
+            s_InitialLoad = false;
+            
+            if (m_CurrentLinkConfig.contains("selected_tags"))
+            {
+                for (auto& [tagPattern, tagConfig] : m_CurrentLinkConfig["selected_tags"].items())
+                {
+                    s_SelectedTags[tagPattern] = true;
+                }
+            }
+            
+            if (m_CurrentLinkConfig.contains("groups"))
+            {
+                for (auto& [groupName, groupConfig] : m_CurrentLinkConfig["groups"].items())
+                {
+                    if (groupConfig.contains("members"))
+                    {
+                        for (auto& member : groupConfig["members"])
+                        {
+                            std::string memberStr = member.get<std::string>();
+                            for (auto& [tagPattern, _] : s_SelectedTags)
+                            {
+                                if (tagPattern == memberStr)
+                                    s_SelectedGroups[tagPattern].push_back(groupName);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        auto OpenGroupPopup = [&](const std::string& p_ExistingName = "")
+        {
+            s_IsEditingGroup = !p_ExistingName.empty();
+            s_EditingGroupName = p_ExistingName;
+            
+            if (s_IsEditingGroup)
+            {
+                strncpy(s_GroupNameBuffer, p_ExistingName.c_str(), sizeof(s_GroupNameBuffer) - 1);
+                s_GroupNameBuffer[sizeof(s_GroupNameBuffer) - 1] = '\0';
+                
+                if (m_CurrentLinkConfig.contains("groups") && m_CurrentLinkConfig["groups"].contains(p_ExistingName))
+                {
+                    auto& groupConfig = m_CurrentLinkConfig["groups"][p_ExistingName];
+                    if (groupConfig.contains("type"))
+                    {
+                        auto& typeConfig = groupConfig["type"];
+                        
+                        if (typeConfig.is_string())
+                        {
+                            std::string typeStr = typeConfig.get<std::string>();
+                            if (typeStr == "unique") s_GroupType = 0;
+                            else if (typeStr == "all") s_GroupType = 2;
+                            else s_GroupType = 0; // fallback
+                        }
+                        else if (typeConfig.is_object() && typeConfig.contains("multiple"))
+                        {
+                            s_GroupType = 1;
+                            s_MultipleLimit = typeConfig["multiple"].get<int>();
+                        }
+                        else
+                        {
+                            s_GroupType = 0; // fallback
+                            s_MultipleLimit = 2;
+                        }
+                    }
+                    else
+                    {
+                        s_GroupType = 0;
+                        s_MultipleLimit = 2;
+                    }
+                }
+            }
+            else
+            {
+                s_GroupNameBuffer[0] = '\0';
+                s_GroupType = 0;
+                s_MultipleLimit = 2;
+            }
+            
+            ImGui::OpenPopup("GroupPopup");
+        };
+
+        if (ImGui::CollapsingHeader("Grupos"))
+        {
+            static std::vector<std::string> s_GroupsToDelete;
+
+            if (ImGui::Button("Adicionar Grupo"))
+                OpenGroupPopup();
+
+            if (m_CurrentLinkConfig.contains("groups") && !m_CurrentLinkConfig["groups"].empty())
+            {
+                ImGui::Text("Grupos existentes:");
+                ImGui::Indent();
+                
+                for (auto& [groupName, groupConfig] : m_CurrentLinkConfig["groups"].items())
+                {
+                    std::string typeStr = "unique";
+                    if (groupConfig.contains("type"))
+                    {
+                        auto& typeConfig = groupConfig["type"];
+                        
+                        if (typeConfig.is_string())
+                            typeStr = typeConfig.get<std::string>();
+                        else if (typeConfig.is_object() && typeConfig.contains("multiple"))
+                            typeStr = "multiple (" + std::to_string(typeConfig["multiple"].get<int>()) + ")";
+                        else
+                            typeStr = "unknown";
+                    }
+                    
+                    int memberCount = 0;
+                    if (groupConfig.contains("members"))
+                        memberCount = groupConfig["members"].size();
+
+                    ImGui::Text("• %s: %s (%d membro%s)", groupName.c_str(), typeStr.c_str(), memberCount, memberCount == 1 ? "" : "s");
+                    ImGui::SameLine();
+                    
+                    if (ImGui::SmallButton(("Editar##" + groupName).c_str()))
+                        OpenGroupPopup(groupName);
+                    
+                    ImGui::SameLine();
+                    
+                    if (ImGui::SmallButton(("Excluir##" + groupName).c_str()))
+                        s_GroupsToDelete.push_back(groupName);
+                }
+                ImGui::Unindent();
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Nenhum grupo definido na configuração atual.");
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            for (auto& groupName : s_GroupsToDelete)
+            {
+                m_CurrentLinkConfig["groups"].erase(groupName);
+                        
+                for (auto& [tagName, groups] : s_SelectedGroups)
+                    groups.erase(std::remove(groups.begin(), groups.end(), groupName), groups.end());
+            }
+            s_GroupsToDelete.clear();
+        }
+
+        if (ImGui::BeginPopupModal("GroupPopup", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("%s Grupo", s_IsEditingGroup ? "Editar" : "Adicionar");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::InputText("Nome do Grupo", s_GroupNameBuffer, sizeof(s_GroupNameBuffer));
+
+            const char* types[] = { "Único", "Múltiplo", "Todos" };
+            ImGui::Combo("Tipo", &s_GroupType, types, IM_ARRAYSIZE(types));
+
+            if (s_GroupType == 1)
+            {
+                ImGui::InputInt("Limite de Múltiplos", &s_MultipleLimit);
+                if (s_MultipleLimit < 2) s_MultipleLimit = 2;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (ImGui::Button(s_IsEditingGroup ? "Salvar" : "Adicionar", ImVec2(120, 0)))
+            {
+                if (strlen(s_GroupNameBuffer) > 0)
+                {
+                    if (!m_CurrentLinkConfig.contains("groups"))
+                        m_CurrentLinkConfig["groups"] = json::object();
+
+                    std::string newGroupName = s_GroupNameBuffer;
+                    
+                    if (m_CurrentLinkConfig["groups"].contains(newGroupName) && 
+                        (!s_IsEditingGroup || newGroupName != s_EditingGroupName))
+                    {
+                        ImGui::OpenPopup("GrupoExistentePopup");
+                    }
+                    else
+                    {
+                        json newGroupConfig;
+                        
+                        if (s_GroupType == 0)
+                            newGroupConfig["type"] = "unique";
+                        else if (s_GroupType == 1)
+                        {
+                            json multipleType;
+                            multipleType["multiple"] = s_MultipleLimit;
+                            newGroupConfig["type"] = multipleType;
+                        }
+                        else
+                            newGroupConfig["type"] = "all";
+                        
+                        if (s_IsEditingGroup && m_CurrentLinkConfig["groups"].contains(s_EditingGroupName))
+                        {
+                            auto& oldGroupConfig = m_CurrentLinkConfig["groups"][s_EditingGroupName];
+                            if (oldGroupConfig.contains("members"))
+                                newGroupConfig["members"] = oldGroupConfig["members"];
+                            else
+                                newGroupConfig["members"] = json::array();
+
+                            if (newGroupName != s_EditingGroupName)
+                            {
+                                m_CurrentLinkConfig["groups"].erase(s_EditingGroupName);
+                                
+                                for (auto& [tagName, groups] : s_SelectedGroups)
+                                {
+                                    for (auto& group : groups)
+                                    {
+                                        if (group == s_EditingGroupName)
+                                            group = newGroupName;
+                                    }
+                                }
+                            }
+                        }
+                        else
+                            newGroupConfig["members"] = json::array();
+                        
+                        m_CurrentLinkConfig["groups"][newGroupName] = newGroupConfig;
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+            }
+
+            ImGui::SameLine();
+
+            if (ImGui::Button("Cancelar", ImVec2(120, 0)))
+                ImGui::CloseCurrentPopup();
+
+            if (ImGui::BeginPopupModal("GrupoExistentePopup", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::Text("Já existe um grupo com este nome!");
+                if (ImGui::Button("OK"))
+                    ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+
+        auto RenderTag = [&](const ClassInfo& p_TagInfo, const std::string& p_DisplayName)
+        {
+            ImGui::PushID(p_TagInfo.CssClass.c_str());
+
+            auto& config = m_CurrentLinkConfig["selected_tags"][p_TagInfo.CssClass];
+            bool selected = s_SelectedTags[p_TagInfo.CssClass];
+            if (ImGui::Checkbox(p_DisplayName.c_str(), &selected))
+            {
+                s_SelectedTags[p_TagInfo.CssClass] = selected;
+                config = json::object();
+            }
+
+            if (selected)
+            {
+                ImGui::Indent();
+
+                ImGui::Text("Tag: %s", p_TagInfo.TagName.c_str());
+                ImGui::Text("Exemplo: %s", p_TagInfo.ExampleContent.c_str());
+
+                if (p_TagInfo.IsLink)
+                {
+
+                    bool follow = config.contains("follow_link") ? config["follow_link"].get<bool>() : false;
+
+                    if (ImGui::Checkbox("Seguir link?", &follow))
+                        config["follow_link"] = follow;
+
+                    if (follow)
+                    {
+                        if (!config.contains("use_config"))
+                            config["use_config"] = "default";
+
+                        std::vector<std::string> configNames;
+                        configNames.reserve(m_LinkConfigs.size());
+                        for (auto& [name, _] : m_LinkConfigs.items())
+                            configNames.push_back(name);
+
+                        if (std::find(configNames.begin(), configNames.end(), "default") == configNames.end())
+                            configNames.push_back("default");
+
+                        std::string currentConfig = config["use_config"].get<std::string>();
+
+                        if (ImGui::BeginCombo("Config usada", currentConfig.c_str()))
+                        {
+                            for (auto& name : configNames)
+                            {
+                                bool isSelected = (currentConfig == name);
+                                if (ImGui::Selectable(name.c_str(), isSelected))
+                                    config["use_config"] = name;
+
+                                if (isSelected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+                    }
+                }
+
+                ImGui::Text("Grupos:");
+                
+                std::vector<std::string>& currentGroups = s_SelectedGroups[p_TagInfo.CssClass];
+                std::string previewValue;
+                if (currentGroups.empty())
+                    previewValue = "Selecionar grupos...";
+                else
+                {
+                    for (size_t i = 0; i < currentGroups.size(); ++i)
+                    {
+                        if (i > 0) previewValue += ", ";
+                        previewValue += currentGroups[i];
+                    }
+                }
+                
+                if (ImGui::BeginCombo("##GrupoCombo", previewValue.c_str()))
+                {
+                    if (m_CurrentLinkConfig.contains("groups"))
+                    {
+                        for (auto& [groupName, groupConfig] : m_CurrentLinkConfig["groups"].items())
+                        {
+                            bool isSelected = std::find(currentGroups.begin(), currentGroups.end(), groupName) != currentGroups.end();
+                            if (ImGui::Selectable(groupName.c_str(), isSelected))
+                            {
+                                if (isSelected)
+                                    currentGroups.erase(std::remove(currentGroups.begin(), currentGroups.end(), groupName), currentGroups.end());
+                                else
+                                    currentGroups.push_back(groupName);
+                            }
+                            
+                            if (isSelected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    
+                    ImGui::Separator();
+                    if (ImGui::Selectable("+ Adicionar novo grupo...", false))
+                        OpenGroupPopup();
+                    
+                    ImGui::EndCombo();
+                }
+
+                ImGui::Unindent();
+            }
+
+            ImGui::Separator();
+            ImGui::PopID();
+        };
+
+        if (ImGui::CollapsingHeader("Classes encontradas", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            for (auto& classInfo : m_Classes)
+            {
+                RenderTag(classInfo, classInfo.CssClass);
+            }
+        }
+
+        if (ImGui::CollapsingHeader("Outros dados encontrados"))
+        {
+            for (auto& dataInfo : m_OtherDatas)
+            {
+                std::string displayName = dataInfo.CssClass.empty() ? "(sem classe)" : dataInfo.CssClass;
+                RenderTag(dataInfo, displayName);
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Gerenciar Grupos", ImVec2(150, 30)))
+            OpenGroupPopup();
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Salvar Configuração", ImVec2(150, 30)))
+        {
+            json newConfig;
+            newConfig["selected_tags"] = json::object();
+            newConfig["groups"] = json::object();
+
+            for (auto& [tagPattern, isSelected] : s_SelectedTags)
+            {
+                if (isSelected)
+                    newConfig["selected_tags"][tagPattern] = m_CurrentLinkConfig["selected_tags"][tagPattern];
+            }
+
+            if (m_CurrentLinkConfig.contains("groups"))
+            {
+                for (auto& [groupName, groupConfig] : m_CurrentLinkConfig["groups"].items())
+                {
+                    json newGroup;
+
+                    if (groupConfig.contains("type"))
+                        newGroup["type"] = groupConfig["type"];
+
+                    json members = json::array();
+                    for (auto& [tagPattern, groups] : s_SelectedGroups)
+                    {
+                        if (s_SelectedTags[tagPattern] && std::find(groups.begin(), groups.end(), groupName) != groups.end())
+                            members.push_back(tagPattern);
+                    }
+
+                    if (!members.empty())
+                    {
+                        newGroup["members"] = members;
+                        newConfig["groups"][groupName] = newGroup;
+                    }
+                }
+            }
+
+            m_CurrentLinkConfig = newConfig;
+            m_LinkConfigs[m_LinkToScrape] = m_CurrentLinkConfig;
+            SaveLinkConfigs();
+
+            ImGui::OpenPopup("ConfigSalvaPopup");
+        }
+
+        if (ImGui::BeginPopupModal("ConfigSalvaPopup", NULL, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::Text("Configuração salva com sucesso!");
+            if (ImGui::Button("OK"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
+
+    json Application::ResolveConfig(const std::string &p_Link)
+    {
+        if (!m_LinkConfigs.contains(p_Link))
+            return {};
+
+        auto cfg = m_LinkConfigs[p_Link];
+        if (cfg.contains("use_config"))
+        {
+            std::string target = cfg["use_config"];
+            if (m_LinkConfigs.contains(target))
+                return m_LinkConfigs[target];
+        }
+
+        return cfg;
+    }
+
+    std::string Application::NormalizeURL(const std::string &p_URL)
+    {
+        auto pos = p_URL.find("?");
+        if (pos != std::string::npos)
+            return p_URL.substr(0, pos);
+        return p_URL;
+    }
+
     bool Application::SendRequest(const json &p_Request)
     {
         if (m_Socket == -1) return false;
@@ -714,14 +1306,14 @@ namespace JD
 
     void Application::DiscoverClasses(const std::string &p_URL)
     {
-        s_IsDiscovering = true;
-        s_DiscoveryComplete = false;
+        s_IsLoading = true;
+        s_LoadingComplete = false;
         
         s_DiscoveryFuture = std::async(std::launch::async, [this, p_URL]()
         {
             try
             {
-                if (!s_IsDiscovering) return;
+                if (!s_IsLoading) return;
                 
                 json request = {
                     {"type", "scrape_request"},
@@ -730,16 +1322,16 @@ namespace JD
 
                 if (SendRequest(request))
                 {
-                    if (!s_IsDiscovering) return;
+                    if (!s_IsLoading) return;
                     
                     json response = ReceiveResponse();
                     
-                    if (!s_IsDiscovering) return;
+                    if (!s_IsLoading) return;
                     
                     if (!response.empty() && response["success"] == true)
                     {
                         std::lock_guard<std::mutex> lock(m_DataMutex);
-                        if (!s_IsDiscovering) return;
+                        if (!s_IsLoading) return;
                         
                         m_ServerResponse = response;
                         
@@ -782,8 +1374,19 @@ namespace JD
                 std::cerr << "Erro no discovery assíncrono: " << e.what() << std::endl;
             }
             
-            s_IsDiscovering = false;
-            s_DiscoveryComplete = true;
+            s_IsLoading = false;
+            s_LoadingComplete = true;
         });
     }
+
+    void Application::SaveLinkConfigs()
+    {
+        std::ofstream file("LinkConfigs.json", std::ios::trunc);
+        if (file.is_open())
+        {
+            file << m_LinkConfigs.dump(4);
+            file.close();
+        }
+    }
+
 } // namespace JD

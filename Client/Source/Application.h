@@ -40,19 +40,30 @@ namespace JD
             void DrawUI();
             void DrawResultsUI();
             void DrawLoadingSpinner();
+            void DrawConfigLink();
+
+            json ResolveConfig(const std::string& p_Link);
+            std::string NormalizeURL(const std::string& p_URL);
 
             bool SendRequest(const json& p_Request);
             json ReceiveResponse();
             bool IsCompleteJson(const std::string& p_JsonStr);
             void DiscoverClasses(const std::string& p_URL);
+            void SaveLinkConfigs();
 
         private:
             bool m_SearchPerformed = false;
             std::string m_LinkToScrape = "";
             Window* m_Window = nullptr;
 
+            std::string m_SimilarConfigLink  = "";
+            bool m_HasSimilarConfig = false;
+
             int m_Socket = -1;
             json m_ServerResponse = {};
+            json m_LinkConfigs = {};
+            json m_CurrentLinkConfig = {};
+            bool m_ConfigLink = false;
             std::mutex m_DataMutex;
             std::vector<ClassInfo> m_Classes;
             std::vector<ClassInfo> m_OtherDatas;
