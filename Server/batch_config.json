@@ -56,9 +56,6 @@
     "exclude_modules": [
         "twisted.trial",
         "hypothesis"
-    ],
-    "add_data": [
-        "Source/ClassDiscoverer;ClassDiscoverer"
     ]
   }
 }

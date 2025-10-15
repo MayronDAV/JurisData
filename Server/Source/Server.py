@@ -2,382 +2,166 @@ import socket
 import json
 import time
 import threading
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 import sys
-import tempfile, os
 import multiprocessing
-from multiprocessing import Queue, Process
 
-
-
-try:
-    from scrapy.crawler import CrawlerProcess
-    from scrapy.utils.project import get_project_settings
-    from scrapy import signals
-except ImportError as e:
-    print(f"[-] ERRO CRÍTICO: Scrapy não está instalado ou não pode ser importado: {e}")
-    print("[-] Instale com: pip install scrapy twisted")
-    sys.exit(1)
-
-try:
-    from ClassDiscoverer import ClassDiscovererSpider
-except ImportError as e:
-    print(f"[-] ERRO CRÍTICO: Não foi possível importar módulos do Scraper: {e}")
-    sys.exit(1)
-
-
-
-class ScrapyWorker:
-    @staticmethod
-    def run_scrapy(p_Url: str, p_ResultQueue: Queue):
-        try:
-            settings = get_project_settings()
-            settings.set('LOG_ENABLED', False)
-            settings.set('LOG_LEVEL', 'ERROR')
-            process = CrawlerProcess(settings)
-
-            results = []    
-            def collect_results(item, response, spider):
-                results.append(item)
-            
-            process.crawl(ClassDiscovererSpider, p_Url=p_Url)
-            for crawler in list(process.crawlers):
-                crawler.signals.connect(collect_results, signal=signals.item_scraped)
-
-            process.start()
-
-            if not results:
-                raise Exception("Nenhum resultado coletado pelo Scrapy")
-            
-            if len(results).to_bytes() > bytes(4096):
-                fd, temp_path = tempfile.mkstemp(suffix=".json")
-                os.close(fd)
-                with open(temp_path, "w", encoding="utf-8") as f:
-                    json.dump(results[0], f, ensure_ascii=False)
-
-                print(f"[+] Resultados muito grandes, salvos em arquivo temporário: {temp_path}")
-                p_ResultQueue.put({'success': True, 'file': temp_path })
-            else:
-                p_ResultQueue.put({'success': True, 'data': results[0] })
-            
-        except Exception as e:
-            p_ResultQueue.put({'success': False, 'error': str(e)})
 
 
 class Server:
-    def __init__(self, p_Host="localhost", p_Port=8082):
-        self.ServerSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.ServerSocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.ServerAddress = (p_Host, p_Port)
-        self.DataPayload = 4096
-        self.ShutdownCommand = "SHUTDOWN_SERVER"
+    def __init__(self, host="localhost", port=8082):
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_addr = (host, port)
+        self.data_payload = 10240
         self.clients = []
-        self.client_states = {}
         self.lock = threading.Lock()
-    
-    def create_response(self, p_Type: str, p_Content: Any, p_Success: bool = True) -> Dict[str, Any]:
-        return {
-            "type": p_Type,
-            "content": p_Content,
-            "success": p_Success,
-            "timestamp": time.time()
-        }
-    
-    def discovery_phase(self, p_Url: str) -> Dict[str, Any]:
-        print(f"[DISCOVERY] Analisando site: {p_Url}")
-        
-        result_queue = Queue()
-        scrapy_process = Process(
-            target=ScrapyWorker.run_scrapy,
-            args=(p_Url, result_queue)
-        )
-        
-        scrapy_process.start()
-        scrapy_process.join(timeout=120)
-        
-        if scrapy_process.is_alive():
-            scrapy_process.terminate()
-            scrapy_process.join()
-            raise Exception("Timeout no scraping (120 segundos)")
-        
-        if result_queue.empty():
-            raise Exception("Nenhum resultado do processo de scraping")
-        
-        result = result_queue.get()
-        
-        if not result['success']:
-            raise Exception(result.get('error', 'Erro desconhecido no scraping'))
-        
-        discovery_data = {}
-        if 'file' in result:
-            with open(result['file'], 'r', encoding='utf-8') as f:
-                discovery_data = json.load(f)
-            os.remove(result['file'])
-        elif 'data' in result:
-            discovery_data = result['data']
-        else:
-            raise Exception(result.get('error', 'Resultado de scraping inválido'))
+        self.shutdown_cmd = "SHUTDOWN_SERVER"
 
-        print(f"[DISCOVERY] Dados coletados: \n\t{len(discovery_data.get('classes', {}))} classes, \n\t{len(discovery_data.get('ids', {}))} ids, \n\t{len(discovery_data.get('other_datas', {}))} other_datas")
-        
-        data = self.format_results(discovery_data)
-        return {
-            "url": p_Url,
-            "classes": data['classes'],
-            "other_datas": data['other_datas'],
-            "scrapy_used": True,
-            "success": True
-        }
-    
-    def format_results(self, p_ScrapyData):
-        data = {
-            'classes': [],
-            'other_datas': []
-        }
+    def create_response(self, type: str, content: Any, success: bool = True) -> Dict[str, Any]:
+        return {"type": type, "content": content, "success": success, "timestamp": time.time()}
 
-        def build_data(info, key : str, info_type : str ="class"):
-            css_class = key
-            if info_type == "other_data":
-                if key.startswith("id:"):
-                    css_class = f"#{key[3:]}"
-                elif key.startswith("class:"):
-                    css_class = key[6:]
-            elif info_type == "id":
-                css_class = f"#{key}"
-
-            return {
-                "css_class": css_class,
-                "example_content": info.get('text', '')[:200],
-                "tag_name": info.get('tag', ''),
-                "element_count": info.get('element_count', 1),
-                "suggested_xpath": info.get('xpath', ''),
-                "is_link": info.get('is_link', False),
-            }
-        
-        if 'ids' in p_ScrapyData:
-            for id_name, id_info in p_ScrapyData['ids'].items():
-                data['classes'].append(build_data(id_info, id_name, "id"))
-
-        if 'classes' in p_ScrapyData:
-            for class_name, class_info in p_ScrapyData['classes'].items():
-                data['classes'].append(build_data(class_info, class_name, "class"))
-
-        if 'other_datas' in p_ScrapyData:
-            for key, data_info in p_ScrapyData['other_datas'].items():
-                data['other_datas'].append(build_data(data_info, key, "other_data"))
-        
-        return data
-
-    def target_phase(self, p_Url: str, p_Targets: Optional[List[str]] = None, p_XPathSelectors: Optional[List[str]] = None) -> Dict[str, Any]:
-        print(f"[TARGETED] Extraindo conteúdo de: {p_Url}")
-        print(f"Classes alvo: {p_Targets}")
-        print(f"XPaths alvo: {p_XPathSelectors}")
-        
-        time.sleep(2)
-        
-        results = []
-        if p_Targets:
-            for css_class in p_Targets:
-                results.append({
-                    "css_class": css_class,
-                    "content": [
-                        f"Conteúdo real 1 da classe {css_class}",
-                        f"Conteúdo real 2 da classe {css_class}",
-                        f"Conteúdo real 3 da classe {css_class}"
-                    ],
-                    "items_found": 3
-                })
-        
-        return {
-            "url": p_Url,
-            "results": results,
-            "total_items": len(results) * 3,
-            "scrape_timestamp": time.time(),
-            "scrapy_used": False
-        }
-    
-    def handle_request(self, p_Client, p_JsonData: Dict[str, Any]) -> None:
-        url = p_JsonData.get('url')
-        if not url:
-            response = self.create_response("error", "URL não fornecida", False)
-            p_Client.send(json.dumps(response).encode('utf-8'))
-            return
-        
-        target_classes = p_JsonData.get('target_classes')
-        xpath_selectors = p_JsonData.get('xpath_selectors')
-        
+    def process_scrape(self, client, config):
         try:
-            if not target_classes and not xpath_selectors:
-                print(f"[+] Iniciando fase de discovery para: {url}")
-                discovery_results = self.discovery_phase(url)
-                
-                with self.lock:
-                    client_addr = p_Client.getpeername()
-                    self.client_states[client_addr] = {
-                        'url': url,
-                        'phase': 'awaiting_selection',
-                        'discovery_data': discovery_results
-                    }
-                
-                response = self.create_response("discovery_results", discovery_results)
-                print(f"[+] Discovery concluído para {url}")
-                
-            else:
-                print(f"[+] Iniciando scraping direcionado para: {url}")
-                scrape_results = self.target_phase(url, target_classes, xpath_selectors)
-                
-                response = self.create_response("scrape_results", scrape_results)
-                print(f"[+] Scraping direcionado concluído para {url}")
-                
-                with self.lock:
-                    client_addr = p_Client.getpeername()
-                    if client_addr in self.client_states:
-                        del self.client_states[client_addr]
+            time.sleep(10)
+
+            scraped_data = {
+                "site1": {
+                    "documentos": [
+                        {"docTitulo": "Titulo 1.1", "docTexto": "Texto 1.1"},
+                        {"docTitulo": "Titulo 1.2", "docTexto": "Texto 1.2"}
+                    ]
+                },
+                "site2": {
+                    "documentos": [
+                        {"docTitulo": "Titulo 2.1", "docTexto": "Texto 2.1"},
+                        {"docTitulo": "Titulo 2.2", "docTexto": "Texto 2.2"}
+                    ]
+                }
+            }
+
+            response = self.create_response("finished", scraped_data)
+            client.sendall(json.dumps(response, default=str).encode('utf-8'))
+
+        except Exception as e:
+            print(f"[-] Erro no process_scrape: {e}")
+            err = self.create_response("error", str(e), False)
+            try:
+                client.sendall(json.dumps(err).encode('utf-8'))
+            except:
+                pass
+
+    def handle_request(self, client, json_data: Dict[str, Any]) -> None:
+        try:
+            config = json_data.get('content', {})
             
-            p_Client.send(json.dumps(response).encode('utf-8'))
+            thread = threading.Thread(
+                target=self.process_scrape, 
+                args=(client, config), 
+                daemon=True
+            )
+            thread.start()
             
         except Exception as e:
-            error_msg = f"Erro durante scraping: {str(e)}"
-            print(f"[-] {error_msg}")
-            response = self.create_response("error", error_msg, False)
-            p_Client.send(json.dumps(response).encode('utf-8'))
+            print(f"[-] Erro no handle_request: {e}")
+            response = self.create_response("error", str(e), False)
+            try:
+                client.sendall(json.dumps(response).encode('utf-8'))
+            except:
+                pass
     
-    def handle_client(self, p_ClientSocket, p_ClientAddress):
-        print(f"[+] Conexão estabelecida com {p_ClientAddress}")
+    def handle_client(self, client_socket, client_addr):
+        print(f"[+] Conexão estabelecida com {client_addr}")
         
         try:
             while True:
-                data = p_ClientSocket.recv(self.DataPayload)
+                data = client_socket.recv(self.data_payload)
                 if not data:
                     break
                 
                 try:
                     json_data = json.loads(data.decode('utf-8'))
-                    print(f"[+] Recebido: {json_data}")
+                    print(f"[+] Recebido comando: {json_data.get('type')}")
 
-                    if json_data.get('type') == 'command' and json_data.get('content') == 'shutdown':
+                    if json_data.get('type') == 'command' and json_data.get('content') == self.shutdown_cmd:
                         print("[-] Shutdown command received")
-                        response = self.create_response("command", "shutdown")
-                        p_ClientSocket.send(json.dumps(response).encode('utf-8'))
-                        break
-                    
+                        response = self.create_response("command", self.shutdown_cmd)
+                        client_socket.send(json.dumps(response).encode('utf-8'))
+                        break           
                     elif json_data.get('type') == 'scrape_request':
-                        self.handle_request(p_ClientSocket, json_data)
-                    
-                    elif json_data.get('type') == 'class_selection':
-                        with self.lock:
-                            client_addr = p_ClientSocket.getpeername()
-                            client_state = self.client_states.get(client_addr, {})
-                        
-                        if client_state.get('phase') == 'awaiting_selection':
-                            selected_classes = json_data.get('selected_classes', [])
-                            selected_xpaths = json_data.get('selected_xpaths', [])
-                            
-                            if not selected_classes and not selected_xpaths:
-                                response = self.create_response("error", "Nenhuma classe ou XPath selecionado", False)
-                                p_ClientSocket.send(json.dumps(response).encode('utf-8'))
-                                continue
-                            
-                            scrape_results = self.target_phase(
-                                client_state['url'], 
-                                selected_classes, 
-                                selected_xpaths
-                            )
-                            
-                            response = self.create_response("scrape_results", scrape_results)
-                            p_ClientSocket.send(json.dumps(response).encode('utf-8'))
+                        self.handle_request(client_socket, json_data)
+                    else:
+                        response = self.create_response("error", "Comando desconhecido", False)
+                        client_socket.send(json.dumps(response).encode('utf-8'))
 
-                            with self.lock:
-                                if client_addr in self.client_states:
-                                    del self.client_states[client_addr]
-                        else:
-                            response = self.create_response("error", "Estado inválido para seleção de classes", False)
-                            p_ClientSocket.send(json.dumps(response).encode('utf-8'))
+                except json.JSONDecodeError as e:
+                    message = data.decode('utf-8', errors='ignore')
+                    print(f"[-] JSON decode error from {client_addr}: {e}")
                     
-                    elif json_data.get('type') == 'message':
-                        message_content = json_data.get('content', '')
-                        print(f"Cliente {p_ClientAddress}: {message_content}")
-                        
-                        response = self.create_response("message", "Mensagem recebida")
-                        p_ClientSocket.send(json.dumps(response).encode('utf-8'))
-                        
-                except json.JSONDecodeError:
-                    message = data.decode('utf-8')
-                    print(f"Cliente {p_ClientAddress} (non-JSON): {message}")
-                    
-                    if message == self.ShutdownCommand:
+                    if message == self.shutdown_cmd:
                         break
                     
-                    response = self.create_response("message", "Comando não-JSON recebido")
-                    p_ClientSocket.send(json.dumps(response).encode('utf-8'))
+                    response = self.create_response("error", "JSON inválido", False)
+                    client_socket.send(json.dumps(response).encode('utf-8'))
                     
         except Exception as e:
-            print(f"[-] Erro com cliente {p_ClientAddress}: {e}")
+            print(f"[-] Erro com cliente {client_addr}: {e}")
         finally:
             with self.lock:
-                client_addr = p_ClientSocket.getpeername()
-                if client_addr in self.client_states:
-                    del self.client_states[client_addr]
-                if p_ClientSocket in self.clients:
-                    self.clients.remove(p_ClientSocket)
+                if client_socket in self.clients:
+                    self.clients.remove(client_socket)
             
-            p_ClientSocket.close()
-            print(f"[-] Conexão com {p_ClientAddress} fechada")
+            client_socket.close()
+            print(f"[-] Conexão com {client_addr} fechada")
     
     def start(self):
-        self.ServerSocket.bind(self.ServerAddress)
-        self.ServerSocket.listen(5)
-        print(f"[+] Servidor ouvindo em {self.ServerAddress}")
+        self.server_socket.bind(self.server_addr)
+        self.server_socket.listen(5)
+        print(f"[+] Servidor ouvindo em {self.server_addr}")
         print("[+] Digite 'exit' para parar o servidor.")
+       
+        threading.Thread(target=self.monitor_exit, daemon=True).start()
         
-        def MonitorExit():
-            while True:
-                command = input()
-                if command.lower() == 'exit':
-                    print("[-] Desligando servidor...")
-                    with self.lock:
-                        for client in self.clients:
-                            try:
-                                shutdown_msg = self.create_response("system", "Servidor está sendo desligado")
-                                client.send(json.dumps(shutdown_msg).encode('utf-8'))
-                                client.close()
-                            except:
-                                pass
-                    self.ServerSocket.close()
-                    break
-        
-        exit_thread = threading.Thread(target=MonitorExit, daemon=True)
-        exit_thread.start()
-        
-        try:
-            while True:
-                client_socket, client_address = self.ServerSocket.accept()
-                
+        while True:
+            try:
+                client_socket, client_addr = self.server_socket.accept()            
                 with self.lock:
                     self.clients.append(client_socket)
                 
-                client_thread = threading.Thread(
-                    target=self.handle_client,
-                    args=(client_socket, client_address),
+                threading.Thread(
+                    target=self.handle_client, 
+                    args=(client_socket, client_addr), 
                     daemon=True
-                )
-                client_thread.start()
-                
-        except OSError:
-            pass
-        except Exception as e:
-            print(f"[-] Erro no servidor: {e}")
-    
+                ).start()
+            except OSError:
+                break  # Socket fechado
+
+    def monitor_exit(self):
+        while True:
+            try:
+                cmd = input().strip()
+                if cmd.lower() == "exit":
+                    print("[-] Desligando servidor...")
+                    self.stop()
+                    break
+            except (EOFError, KeyboardInterrupt):
+                break
+
     def stop(self):
         with self.lock:
             for client in self.clients:
                 try:
+                    shutdown_msg = self.create_response("system", self.shutdown_cmd)
+                    client.send(json.dumps(shutdown_msg).encode('utf-8'))
                     client.close()
                 except:
                     pass
+            self.clients.clear()
         
-        self.ServerSocket.close()
-        print("[-] Servidor parado")
+        try:
+            self.server_socket.close()
+        except:
+            pass
 
 def main():
     if sys.platform.startswith('win'):
@@ -388,8 +172,11 @@ def main():
         server.start()
     except KeyboardInterrupt:
         print("\n[-] Servidor interrompido pelo usuário.")
+    except Exception as e:
+        print(f"[-] Erro no servidor: {e}")
     finally:
         server.stop()
+        print("[-] Servidor desligado")
 
 if __name__ == "__main__":
     main()
