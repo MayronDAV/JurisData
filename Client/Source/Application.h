@@ -31,7 +31,7 @@ namespace JD
             void DrawResultsUI();
             void DrawLoadingSpinner();
 
-            json CreateRequest(const std::string& p_Type, const std::string& p_Term, const std::string& p_Config);
+            json CreateRequest(const std::string& p_Type, const std::string& p_Term);
             bool SendRequest(const json& p_Request);
             json ReceiveResponse();
             bool IsCompleteJson(const std::string& p_JsonStr);

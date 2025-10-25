@@ -1,0 +1,49 @@
+{
+    "settings": {
+        "max_spiders": 4
+    },
+    "sites": {
+        "https://consultasaj.tjam.jus.br/cjsg/consultaCompleta.do": {
+            "scrape_config": {
+                "expand_collapse": false,
+                "collapse_pattern": "*collapse*"
+            },
+            "search_config": {
+                "method": "form_fill",
+                "form_fill": {
+                    "input_selector": "#iddados.buscaInteiroTeor",
+                    "submit_selector": "#pbSubmit",
+                    "submit_method": "click",
+                    "wait_after_submit": 3000
+                },
+                "pagination": {
+                    "strategy": "click",
+                    "next_selector": "div.trocaDePagina a[title='Próxima página']",
+                    "prev_selector": "div.trocaDePagina a[title='Página anterior']"
+                },
+                "results_selector": "#tdResultados"
+            },
+            "selected": {
+                "processo": {
+                    "members": [
+                        "downloadEmenta",
+                        "group:ementa"
+                    ],
+                    "type": "unique"
+                },
+                "ementa": {
+                    "members": [
+                        "selector:tr.ementaClass2 strong",
+                        "selector:tr.ementaClass2"
+                    ],
+                    "members_config": {
+                        "selector:tr.ementaClass2": {
+                            "preference": "style='display: none;'"
+                        }
+                    },
+                    "type": { "multiple": 7 }
+                }
+            }
+        }
+    }
+}

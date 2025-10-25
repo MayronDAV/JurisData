@@ -484,7 +484,7 @@ namespace JD
                 m_SearchPerformed = true;
                 s_SearchStartTime = std::chrono::steady_clock::now();
 
-                SendRequest(CreateRequest("scrape_request", m_SearchTerm, ""));
+                SendRequest(CreateRequest("scrape_request", m_SearchTerm));
                 s_IsLoading = true;
                 s_LoadingComplete = false;
 
@@ -527,7 +527,7 @@ namespace JD
     
         if (s_Results.contains("success") && !s_Results["success"].get<bool>())
         {
-            std::string errorMsg = "Erro desconhecido";
+            std::string errorMsg = "Desconhecido (erro não documentado!)";
             if (s_Results.contains("content"))
             {
                 errorMsg = s_Results["content"].get<std::string>();
@@ -629,12 +629,11 @@ namespace JD
         ImGui::Text(text);
     }
 
-    json Application::CreateRequest(const std::string &p_Type, const std::string &p_Term, const std::string&p_Config)
+    json Application::CreateRequest(const std::string &p_Type, const std::string &p_Term)
     {
         json request = {
             { "type", p_Type },
-            { "search_term", p_Term},
-            { "config", p_Config }
+            { "search_term", p_Term}
         };
         return request;
     }

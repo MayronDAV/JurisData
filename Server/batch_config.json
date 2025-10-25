@@ -54,8 +54,12 @@
       "twisted"
     ],
     "exclude_modules": [
-        "twisted.trial",
-        "hypothesis"
+      "twisted.trial",
+      "hypothesis"
+    ],
+    "add_data": [
+      "Source/Config.json;.",
+      "Source/Spider;Spider"
     ]
   }
 }

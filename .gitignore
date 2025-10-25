@@ -5,3 +5,4 @@ build/
 *.spec
 *.pyc
 __pycache__/
+*.txt

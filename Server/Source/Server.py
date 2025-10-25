@@ -1,11 +1,182 @@
 import socket
 import json
+import os
 import time
 import threading
 from typing import Dict, Any
 import sys
 import multiprocessing
+import asyncio
+import logging
 
+try: 
+    from twisted.internet import asyncioreactor
+
+    if hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    asyncioreactor.install()
+
+    from twisted.internet import defer, reactor
+    from scrapy.crawler import CrawlerRunner
+    from scrapy.utils.project import get_project_settings
+    from scrapy import signals
+except ImportError as e:
+    print(f"[-] Scrapy/Twisted não disponíveis: {e}")
+    sys.exit(1)
+
+try:
+    from Spider import Spider
+except ImportError as e:
+    print(f"[-] Falha ao importar Spider: {e}")
+    sys.exit(1)
+
+
+
+DEFAULT_MAX_SPIDERS = 5
+
+
+class ScrapyWorker:
+    def __init__(self, request, config, conn=None):
+        self.config = config
+        self.request = request
+        self.conn = conn
+        self.sites = config.get("sites", {})
+
+        logging.basicConfig(
+            level=logging.ERROR,
+            format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        self.settings = {
+            'CONCURRENT_REQUESTS': 1,
+            'DOWNLOAD_DELAY': 1,
+            'AUTOTHROTTLE_ENABLED': True,
+            
+            # Desabilita o logging do Scrapy para usar o nosso
+            'LOG_ENABLED': False,
+            
+            # Playwright
+            'DOWNLOAD_HANDLERS': {
+                "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+                "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+            },
+            'TWISTED_REACTOR': "twisted.internet.asyncioreactor.AsyncioSelectorReactor",
+            'PLAYWRIGHT_BROWSER_TYPE': "chromium",
+            'PLAYWRIGHT_LAUNCH_OPTIONS': {
+                "headless": True,
+                "timeout": 30 * 1000,
+            },
+        }
+
+        self.runner = CrawlerRunner(self.settings)
+        self.max_spiders = config.get("settings", {}).get("max_spiders", DEFAULT_MAX_SPIDERS)
+        self.semaphore = defer.DeferredSemaphore(tokens=self.max_spiders)
+        self.collected_data = {}
+
+        print(f"[ScrapyWorker] Máximo de spiders simultâneas: {self.max_spiders}")
+
+    @defer.inlineCallbacks
+    def crawl_site(self, url, site_conf, search_term):
+        yield self.semaphore.acquire()
+        site_data = {}
+        try:
+            print(f"[Spider] Iniciando scrape de {url}")
+
+            spider_config = {
+                "sites": {url: site_conf},
+                "settings": self.config.get("settings", {}),
+            }
+
+            crawler = self.runner.create_crawler(Spider)
+
+            def collect_results(item, response, spider):
+                if isinstance(item, dict):
+                    for key, value in item.items():
+                        if value is not None:
+                            if key in site_data:
+                                if not isinstance(site_data[key], list):
+                                    site_data[key] = [site_data[key]]
+                                site_data[key].append(value)
+                            else:
+                                site_data[key] = value
+
+            crawler.signals.connect(collect_results, signal=signals.item_scraped)
+
+            yield crawler.crawl(start_urls=[url], config=spider_config, search_term=search_term)
+
+            self.collected_data[url] = site_data
+            print(f"[Spider] Concluído scrape de {url}: {len(site_data)} campos coletados")
+
+        except Exception as e:
+            print(f"[Spider] Erro em {url}: {e}")
+            self.collected_data[url] = {}
+        finally:
+            self.semaphore.release()
+
+
+
+    @defer.inlineCallbacks
+    def crawl_all_sites(self):
+        if not self.sites:
+            print("[ScrapyWorker] Nenhum site configurado.")
+            if self.conn:
+                self.conn.send({})
+                self.conn.close()
+            return
+
+
+        search_term = self.request.get("search_term", "")
+        tasks = [self.crawl_site(url, conf, search_term) for url, conf in self.sites.items()]
+        print(f"[ScrapyWorker] Executando {len(tasks)} spiders (máx {self.max_spiders})")
+        yield defer.DeferredList(tasks, consumeErrors=True)
+
+        print(f"[ScrapyWorker] Todas concluídas. Total de sites processados: {len(self.collected_data)}")
+        if self.conn:
+            time.sleep(0.2)
+            self.conn.send(self.collected_data)
+            self.conn.close()
+
+def start_scrapy_worker(request, config, conn=None):
+    try:
+        worker = ScrapyWorker(request, config, conn)
+        d = worker.crawl_all_sites()
+
+        def _on_done(_):
+            reactor.callFromThread(reactor.stop)
+
+        d.addBoth(_on_done)
+
+        if not reactor.running:
+            reactor.run(installSignalHandlers=False)
+    except Exception as e:
+        print(f"[-] Erro no worker: {e}")
+        if conn:
+            conn.send({"error": str(e)})
+            conn.close()
+
+
+
+
+def load_config():
+    try:
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        
+        json_path = os.path.join(base_path, 'Config.json')
+        
+        with open(json_path, 'r', encoding='utf-8') as arquivo:
+            return json.load(arquivo)
+            
+    except FileNotFoundError:
+        print(f"Arquivo de Config não encontrado em: {json_path}")
+        return {}
+    except json.JSONDecodeError:
+        print("Erro ao decodificar o JSON de config")
+        return {}
 
 
 class Server:
@@ -17,47 +188,47 @@ class Server:
         self.clients = []
         self.lock = threading.Lock()
         self.shutdown_cmd = "SHUTDOWN_SERVER"
+        self.config = load_config();
 
     def create_response(self, type: str, content: Any, success: bool = True) -> Dict[str, Any]:
         return {"type": type, "content": content, "success": success, "timestamp": time.time()}
 
-    def process_scrape(self, client, config):
+    def process_scrape(self, client, request):
         try:
-            time.sleep(10)
+            parent_conn, child_conn = multiprocessing.Pipe()
+            p = multiprocessing.Process(
+                target=start_scrapy_worker, 
+                args=(request, self.config, child_conn)
+            )
+            p.start()
 
-            scraped_data = {
-                "site1": {
-                    "documentos": [
-                        {"docTitulo": "Titulo 1.1", "docTexto": "Texto 1.1"},
-                        {"docTitulo": "Titulo 1.2", "docTexto": "Texto 1.2"}
-                    ]
-                },
-                "site2": {
-                    "documentos": [
-                        {"docTitulo": "Titulo 2.1", "docTexto": "Texto 2.1"},
-                        {"docTitulo": "Titulo 2.2", "docTexto": "Texto 2.2"}
-                    ]
-                }
-            }
+            if parent_conn.poll(300):  # 5 minutos timeout
+                scraped_data = parent_conn.recv()
+            else:
+                scraped_data = {"error": "Timeout no scraping"}
+                p.terminate()
+
+            p.join(timeout=30)
+            if p.is_alive():
+                p.terminate()
+                p.join()
 
             response = self.create_response("finished", scraped_data)
-            client.sendall(json.dumps(response, default=str).encode('utf-8'))
+            client.send(json.dumps(response, default=str).encode('utf-8'))
 
         except Exception as e:
             print(f"[-] Erro no process_scrape: {e}")
             err = self.create_response("error", str(e), False)
             try:
-                client.sendall(json.dumps(err).encode('utf-8'))
+                client.send(json.dumps(err).encode('utf-8'))
             except:
                 pass
 
     def handle_request(self, client, json_data: Dict[str, Any]) -> None:
         try:
-            config = json_data.get('content', {})
-            
             thread = threading.Thread(
                 target=self.process_scrape, 
-                args=(client, config), 
+                args=(client, json_data),
                 daemon=True
             )
             thread.start()
@@ -66,7 +237,7 @@ class Server:
             print(f"[-] Erro no handle_request: {e}")
             response = self.create_response("error", str(e), False)
             try:
-                client.sendall(json.dumps(response).encode('utf-8'))
+                client.send(json.dumps(response).encode('utf-8'))
             except:
                 pass
     
