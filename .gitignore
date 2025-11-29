@@ -1,8 +1,9 @@
 bin/
 build/
 *.egg-info
-/.vscode
+.vscode/
 *.spec
 *.pyc
 __pycache__/
-*.txt
+consulta.txt
+

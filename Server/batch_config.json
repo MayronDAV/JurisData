@@ -7,59 +7,47 @@
     "name": "JurisDataServer",
     "output_dir": "bin",
     "build_dir": "../build",
+
     "hidden_imports": [
-      "scrapy",
-      "parsel",
-      "w3lib",
-      "queuelib",
-      "protego",
-      "cssselect",
+      "playwright",
+      "playwright.async_api",
+      "playwright.sync_api",
       "lxml",
       "lxml.etree",
       "lxml._elementpath",
       "lxml.html",
-      "lxml.html.clean",
       "lxml.builder",
-      "twisted",
-      "zope.interface",
-      "service_identity",
-      "cryptography",
-      "pyasn1",
-      "idna",
-      "OpenSSL"
+      "parsel"
     ],
-    "collect_metadata": [
-      "scrapy",
-      "parsel",
-      "w3lib",
-      "queuelib",
-      "protego",
-      "cssselect",
-      "lxml",
-      "twisted",
-      "zope.interface",
-      "service_identity",
-      "cryptography",
-      "pyasn1",
-      "idna"
-    ],
+
     "collect_submodules": [
-      "scrapy",
-      "parsel",
-      "w3lib",
-      "queuelib",
-      "protego",
-      "cssselect",
+      "playwright",
       "lxml",
-      "twisted"
+      "parsel"
     ],
+
+    "collect_metadata": [
+      "playwright",
+      "lxml",
+      "parsel"
+    ],
+
     "exclude_modules": [
-      "twisted.trial",
-      "hypothesis"
+      "twisted",
+      "scrapy",
+      "zope.interface",
+      "queuelib",
+      "w3lib",
+      "protego",
+      "OpenSSL",
+      "cryptography",
+      "pyasn1"
     ],
+
     "add_data": [
       "Source/Config.json;.",
-      "Source/Spider;Spider"
+      "Source/ParserEngine;ParserEngine",
+      "Source/Worker;PlaywrightWorker"
     ]
   }
 }

@@ -565,7 +565,7 @@ namespace JD
 
             if (!siteData.is_object())
                 continue;
-
+                
             for (auto& [groupName, groupValues] : siteData.items())
             {
                 ImGui::Separator();
@@ -578,7 +578,10 @@ namespace JD
                 ImGui::Spacing();
 
                 if (!groupValues.is_array())
+                {
+                    ImGui::TextWrapped(groupValues.dump(2).c_str());
                     continue;
+                }
 
                 int itemIndex = 0;
                 for (auto& item : groupValues)

@@ -1,47 +1,44 @@
 {
     "settings": {
-        "max_spiders": 4
+        "headless": true
     },
     "sites": {
-        "https://consultasaj.tjam.jus.br/cjsg/consultaCompleta.do": {
-            "scrape_config": {
-                "expand_collapse": false,
-                "collapse_pattern": "*collapse*"
-            },
+        "TJRJ": {
+            "url": "https://www3.tjrj.jus.br/ejuris/ConsultarJurisprudencia.aspx",
             "search_config": {
                 "method": "form_fill",
-                "form_fill": {
-                    "input_selector": "#iddados.buscaInteiroTeor",
-                    "submit_selector": "#pbSubmit",
-                    "submit_method": "click",
-                    "wait_after_submit": 3000
-                },
+                "input_selector": "input[id='ContentPlaceHolder1_txtTextoPesq']",
+                "submit_selector": "#ContentPlaceHolder1_btnPesquisar",
+                "aspnet": true,
+                "postback_target": "ctl00$ContentPlaceHolder1$btnPesquisar",
+                "submit_method": "postback",
                 "pagination": {
-                    "strategy": "click",
-                    "next_selector": "div.trocaDePagina a[title='Próxima página']",
-                    "prev_selector": "div.trocaDePagina a[title='Página anterior']"
-                },
-                "results_selector": "#tdResultados"
+                    "max_pages": 1,
+                    "method": "click",
+                    "next_selector": "img[id='avanca']",
+                    "prev_selector": "img[id='retorna']"
+                }
             },
-            "selected": {
-                "processo": {
-                    "members": [
-                        "downloadEmenta",
-                        "group:ementa"
-                    ],
-                    "type": "unique"
-                },
-                "ementa": {
-                    "members": [
-                        "selector:tr.ementaClass2 strong",
-                        "selector:tr.ementaClass2"
-                    ],
-                    "members_config": {
-                        "selector:tr.ementaClass2": {
-                            "preference": "style='display: none;'"
+            "groups": {
+                "dados": {
+                    "type": "all",
+                    "parent_group": null,
+                    "members": {
+                        "selector:tr": {
+                            "follow_link": false           
                         }
-                    },
-                    "type": { "multiple": 7 }
+                    }
+                },
+                "document": {
+                    "type": "single",
+                    "parent_group": "dados",
+                    "members": {
+                        "selector:a": {
+                            "attribute": "href",
+                            "follow_link": true,
+                            "use_config": "TJRJ"
+                        }
+                    }
                 }
             }
         }
