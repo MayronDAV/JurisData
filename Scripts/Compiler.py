@@ -11,6 +11,7 @@ import sys
 import subprocess
 import argparse
 import json
+import shutil
 from pathlib import Path
 
 try:
@@ -34,7 +35,12 @@ class PyInstallerCompiler:
             'exclude_modules': [],
             'output_dir': 'dist',
             'build_dir': 'build',
-            'clean_build': True
+            'clean_build': True,
+            'pathex': [],
+            'hookspath': [],
+            'runtime_hooks': [],
+            'upx': True,
+            'upx_exclude': []
         }
     
     def check_pyinstaller(self):
@@ -75,7 +81,116 @@ class PyInstallerCompiler:
         """Check if path exists, handling relative paths"""
         resolved_path = self.resolve_path(path, base_dir)
         return os.path.exists(resolved_path), resolved_path
-
+    
+    def install_playwright_browsers(self):
+        """Install Playwright browsers before compilation"""
+        print("\n" + "="*50)
+        print("Installing Playwright browsers...")
+        print("="*50)
+        
+        try:
+            # Check if playwright is installed
+            import playwright
+            print("✓ Playwright found")
+            
+            # Install chromium browser
+            cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                print("✓ Playwright browsers installed")
+                return True
+            else:
+                print(f"✗ Error installing browsers: {result.stderr}")
+                return False
+                
+        except ImportError:
+            print("✗ Playwright not installed")
+            return False
+    
+    def collect_playwright_browsers(self, batch_file_dir):
+        """Collect Playwright browser binaries for inclusion in executable"""
+        datas = []
+        
+        try:
+            from pathlib import Path
+            
+            # Common paths where browsers are installed
+            possible_paths = [
+                Path.home() / ".cache" / "ms-playwright",
+                Path.home() / "AppData" / "Local" / "ms-playwright",  # Windows
+                Path.home() / ".local" / "share" / "playwright",      # Linux
+                Path.home() / "Library" / "Caches" / "ms-playwright", # macOS
+            ]
+            
+            browsers_path = None
+            for path in possible_paths:
+                if path.exists():
+                    browsers_path = path
+                    break
+            
+            if browsers_path and browsers_path.exists():
+                print(f"Found browsers at: {browsers_path}")
+                
+                # For each browser found
+                for browser_dir in browsers_path.iterdir():
+                    if browser_dir.is_dir():
+                        # Clean up browser name for destination path
+                        browser_name = browser_dir.name
+                        dest_path = f"playwright/driver/package/.local-browsers/{browser_name}"
+                        
+                        # Add to datas
+                        datas.append((str(browser_dir), dest_path))
+                        print(f"  [+] {browser_name} -> {dest_path}")
+                
+                return datas
+            else:
+                print("✗ Playwright browsers not found")
+                print("  Run: python -m playwright install chromium")
+                return []
+                
+        except Exception as e:
+            print(f"✗ Error collecting browsers: {e}")
+            return []
+    
+    def process_special_rules(self, config, batch_file_dir):
+        """Process special rules in configuration"""
+        datas = []
+        
+        for item in config.get('add_data', []):
+            if isinstance(item, dict):
+                # Handle special rules like "__rule__": "collect_browser_binaries"
+                if item.get('__rule__') == 'collect_browser_binaries':
+                    print("Processing rule: collect_browser_binaries")
+                    browser_datas = self.collect_playwright_browsers(batch_file_dir)
+                    datas.extend(browser_datas)
+                # Add more rules here as needed
+            elif isinstance(item, str):
+                datas.append(item)
+        
+        return datas
+    
+    def format_datas(self, datas, batch_file_dir):
+        """Format data files for .spec file, handling special cases"""
+        formatted = []
+        
+        for data in datas:
+            if isinstance(data, tuple):
+                # Already formatted as (src, dest)
+                formatted.append(data)
+            elif isinstance(data, str):
+                if ';' in data:
+                    src, dest = data.split(';', 1)
+                    src_exists, resolved_src = self.path_exists(src, batch_file_dir)
+                    if src_exists:
+                        # Use raw string for paths to avoid escape issues
+                        formatted.append((fr"{resolved_src}", dest))
+                else:
+                    # Handle simple data entries
+                    formatted.append(data)
+        
+        return formatted
+    
     def generate_spec_file(self, script_path, config, batch_file_dir):
         """Generate a complete .spec file for PyInstaller with all configurations"""
         script_name = Path(script_path).stem
@@ -94,8 +209,16 @@ class PyInstallerCompiler:
                 except Exception as e:
                     print(f"Warning: could not collect submodules for {mod}: {e}")
         
+        # Process special rules in add_data
+        special_datas = self.process_special_rules(config, batch_file_dir)
+        
+        # Combine regular add_data with special rule results
+        all_add_data = config.get('add_data', [])[:]
+        all_add_data = [item for item in all_add_data if not isinstance(item, dict)]  # Remove dict rules
+        all_add_data.extend(special_datas)
+        
         # Process datas including collect_metadata and add_data
-        all_datas = self.format_datas(config.get('add_data', []), batch_file_dir)
+        all_datas = self.format_datas(all_add_data, batch_file_dir)
         
         # Add metadata from collect_metadata
         if copy_metadata:
@@ -117,6 +240,26 @@ class PyInstallerCompiler:
         # Console setting
         console_setting = "True" if not config.get('noconsole', True) else "False"
         
+        # Additional paths
+        pathex = config.get('pathex', [])
+        pathex_str = ", ".join([fr"r'{self.resolve_path(p, batch_file_dir)}'" for p in pathex])
+        if pathex_str:
+            pathex_str = f"pathex=[{pathex_str}],"
+        else:
+            pathex_str = ""
+        
+        # Runtime hooks
+        runtime_hooks = config.get('runtime_hooks', [])
+        runtime_hooks_str = ", ".join([fr"r'{self.resolve_path(hook, batch_file_dir)}'" for hook in runtime_hooks])
+        
+        # Hooks path
+        hookspath = config.get('hookspath', [])
+        hookspath_str = ", ".join([fr"r'{self.resolve_path(path, batch_file_dir)}'" for path in hookspath])
+        
+        # UPX settings
+        upx = config.get('upx', True)
+        upx_exclude = config.get('upx_exclude', [])
+        
         # Generate the spec file content with proper paths
         spec_template = f"""# -*- mode: python ; coding: utf-8 -*-
 
@@ -131,13 +274,13 @@ block_cipher = None
 
 a = Analysis(
     [r'{script_path}'],
-    pathex=[r'{os.path.dirname(script_path)}'],
+    {pathex_str}
     binaries=[],
     datas={all_datas},
     hiddenimports={all_hidden_imports},
-    hookspath=[],
+    hookspath=[{hookspath_str}],
     hooksconfig={{}},
-    runtime_hooks=[],
+    runtime_hooks=[{runtime_hooks_str}],
     excludes={config.get('exclude_modules', [])},
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -162,7 +305,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx={upx},
+    upx_exclude={upx_exclude},
     console={console_setting},
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -186,7 +330,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx={upx},
+    upx_exclude={upx_exclude},
     console={console_setting},
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -201,28 +346,13 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
-    upx_exclude=[],
+    upx={upx},
+    upx_exclude={upx_exclude},
     name='{exe_name}',
 )"""
         
         return spec_template
     
-    def format_datas(self, datas, batch_file_dir):
-        """Format data files for .spec file"""
-        formatted = []
-        for data in datas:
-            if ';' in data:
-                src, dest = data.split(';', 1)
-                src_exists, resolved_src = self.path_exists(src, batch_file_dir)
-                if src_exists:
-                    # Use raw string for paths to avoid escape issues
-                    formatted.append((fr"{resolved_src}", dest))
-            else:
-                # Handle simple data entries
-                formatted.append(data)
-        return formatted
-
     def compile_script(self, script_path, config=None, batch_file_dir=None):
         if config:
             self.config.update(config)
@@ -238,8 +368,14 @@ coll = COLLECT(
             if not self.install_pyinstaller():
                 return False
         
+        # INSTALL PLAYWRIGHT BROWSERS IF NEEDED
+        playwright_imports = ['playwright', 'playwright.async_api', 'playwright.sync_api']
+        if any(imp in self.config.get('hidden_imports', []) for imp in playwright_imports):
+            print("\nChecking Playwright browsers...")
+            self.install_playwright_browsers()
+        
         script_name = Path(resolved_script_path).stem
-        print(f"Compiling {resolved_script_path}...")
+        print(f"\nCompiling {resolved_script_path}...")
 
         # Resolve output directories
         resolved_output_dir = self.resolve_path(self.config['output_dir'], batch_file_dir)
@@ -259,30 +395,38 @@ coll = COLLECT(
             f.write(spec_content)
         
         print(f"Generated spec file: {spec_path}")
-    
+        
+        # Build PyInstaller command
         cmd = [
             sys.executable, 
             "-m", 
             "PyInstaller",
             "--distpath", resolved_output_dir,
             "--workpath", resolved_build_dir,
-            spec_path
         ]
         
         # Add clean option if specified
         if self.config.get('clean_build', True):
             cmd.append("--clean")
         
+        # Add spec file
+        cmd.append(spec_path)
+        
         print(f"Running: {' '.join(cmd)}")
         
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=True, text=True)
             
             if result.returncode == 0:
-                print(f"Compilation completed successfully!")
+                print(f"\n✓ Compilation completed successfully!")
                 executable_name = f"{self.config['name'] or script_name}.exe"
                 executable_path = os.path.join(resolved_output_dir, executable_name)
                 print(f"Executable: {executable_path}")
+                
+                # Check executable size
+                if os.path.exists(executable_path):
+                    size = os.path.getsize(executable_path) / (1024 * 1024)
+                    print(f"Executable size: {size:.2f} MB")
                 
                 # Clean up spec file if configured
                 if self.config.get('clean_build', True):
@@ -294,22 +438,24 @@ coll = COLLECT(
                 
                 return True
             else:
-                print(f"Compilation error: {result.stderr}")
+                print(f"\n✗ Compilation error:")
+                if result.stderr:
+                    print(f"Stderr: {result.stderr[:500]}...")  # Show first 500 chars
                 if result.stdout:
-                    print(f"Stdout: {result.stdout}")
+                    print(f"Stdout: {result.stdout[:500]}...")
                 return False
                 
         except subprocess.CalledProcessError as e:
-            print(f"Error running PyInstaller: {e}")
-            print(f"Error output: {e.stderr}")
-            if e.stdout:
-                print(f"Stdout: {e.stdout}")
+            print(f"\n✗ Error running PyInstaller: {e}")
+            print(f"Error output: {e.stderr[:500] if e.stderr else 'No stderr'}...")
             
             # Don't remove spec file on error for debugging
             print(f"Spec file preserved for debugging: {spec_path}")
             return False
         except Exception as e:
-            print(f"Unexpected error: {e}")
+            print(f"\n✗ Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
         
     def clean_build_files(self, batch_file_dir=None):
@@ -353,9 +499,13 @@ def main():
     parser.add_argument('--collect-submodules', action='append', help='Collect all submodules of a package')
     parser.add_argument('--collect-metadata', action='append', help='Collect package metadata')
     parser.add_argument('--exclude-module', action='append', help='Exclude module from build')
+    parser.add_argument('--runtime-hook', action='append', help='Runtime hooks')
+    parser.add_argument('--hookspath', action='append', help='Hooks path')
+    parser.add_argument('--pathex', action='append', help='Additional paths')
     parser.add_argument('--batch', help='JSON file with list of scripts to compile')
     parser.add_argument('--clean', action='store_true', help='Clean up build files after compilation')
     parser.add_argument('--no-clean', action='store_true', help='Keep build files after compilation')
+    parser.add_argument('--install-browsers', action='store_true', help='Install Playwright browsers before compilation')
     
     args = parser.parse_args()
     
@@ -373,7 +523,10 @@ def main():
         'collect_submodules': args.collect_submodules or [],
         'collect_metadata': args.collect_metadata or [],
         'exclude_modules': args.exclude_module or [],
-        'clean_build': not args.no_clean  # Invert logic for clarity
+        'runtime_hooks': args.runtime_hook or [],
+        'hookspath': args.hookspath or [],
+        'pathex': args.pathex or [],
+        'clean_build': not args.no_clean
     }
     
     if args.batch:
@@ -394,6 +547,10 @@ def main():
                 # Update config with batch settings
                 config.update(batch_config_settings)
                 
+                # Install browsers if requested
+                if args.install_browsers:
+                    compiler.install_playwright_browsers()
+                
                 # Change to batch file directory to handle relative paths correctly
                 original_cwd = os.getcwd()
                 try:
@@ -401,7 +558,16 @@ def main():
                     print(f"Changed working directory to: {batch_file_dir}")
                     
                     results = compiler.batch_compile(scripts, config, batch_file_path)
-                    print(f"\nResults: {sum(results.values())}/{len(results)} successful compilations")
+                    
+                    successful = sum(results.values())
+                    total = len(results)
+                    print(f"\n{'='*50}")
+                    print(f"Results: {successful}/{total} successful compilations")
+                    if successful < total:
+                        print("Failed scripts:")
+                        for script, success in results.items():
+                            if not success:
+                                print(f"  ✗ {script}")
                     
                 finally:
                     os.chdir(original_cwd)
@@ -415,8 +581,14 @@ def main():
             print(f"Error reading JSON file {args.batch}: {e}")
         except Exception as e:
             print(f"Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
     
     elif args.script:
+        # Install browsers if requested
+        if args.install_browsers:
+            compiler.install_playwright_browsers()
+            
         success = compiler.compile_script(args.script, config)
         if success and config['clean_build']:
             compiler.clean_build_files()

@@ -17,13 +17,15 @@
       "lxml._elementpath",
       "lxml.html",
       "lxml.builder",
-      "parsel"
+      "parsel",
+      "w3lib"
     ],
 
     "collect_submodules": [
       "playwright",
       "lxml",
-      "parsel"
+      "parsel",
+      "w3lib"
     ],
 
     "collect_metadata": [
@@ -37,7 +39,6 @@
       "scrapy",
       "zope.interface",
       "queuelib",
-      "w3lib",
       "protego",
       "OpenSSL",
       "cryptography",
@@ -48,6 +49,9 @@
       "Source/Config.json;.",
       "Source/ParserEngine;ParserEngine",
       "Source/Worker;PlaywrightWorker"
-    ]
+    ],
+
+    "hookspath": ["hooks"],
+    "runtime_hooks": ["hooks/runtime-hook-playwright.py"]
   }
 }

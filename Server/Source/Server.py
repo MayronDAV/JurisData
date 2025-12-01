@@ -65,17 +65,22 @@ class Server:
 
     def handle_request(self, client, json_data: Dict[str, Any]) -> None:
         try:
-            site_cfg = self.config["sites"]["TJRJ"]
+            site_cfg = self.config["sites"]["TJSP"]
 
             worker = PlaywrightWorker(site_cfg)
             pages_html = asyncio.run(worker.execute(json_data["search_term"]))
 
+            open("debug_pages.html", "w", encoding="utf-8").write("\n<!-- PAGE BREAK -->\n".join(pages_html))
+
             parser = ParserEngine(site_cfg)
             parsed = asyncio.run(parser.parse(pages_html))
 
-            response = self.create_response("finished", {
+            result = {
                 site_cfg["url"]: parsed
-            })
+            };
+            open("debug_parsed.json", "w", encoding="utf-8").write(json.dumps(result, indent=4, ensure_ascii=False))
+            
+            response = self.create_response("finished", result)
 
             client.send(json.dumps(response, default=str).encode('utf-8'))
 
@@ -180,6 +185,19 @@ class Server:
         except:
             pass
 
+def delete_cookies_file():
+    file_to_delete = "cookies.json"
+    if os.path.exists(file_to_delete):
+        try:
+            os.remove(file_to_delete)
+            print(f"Arquivo '{file_to_delete}' excluido com sucesso!.")
+        except PermissionError:
+            print(f"Permissão negada: Não foi possível excluir '{file_to_delete}'.")
+        except Exception as e:
+            print(f"Ocorreu um erro ao excluir '{file_to_delete}': {e}")
+    else:
+        print(f"O arquivo '{file_to_delete}' não existe.")
+
 def main():
     if sys.platform.startswith('win'):
         multiprocessing.freeze_support()
@@ -193,6 +211,7 @@ def main():
         print(f"[-] Erro no servidor: {e}")
     finally:
         server.stop()
+        delete_cookies_file()
         print("[-] Servidor desligado")
 
 if __name__ == "__main__":

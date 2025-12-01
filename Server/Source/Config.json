@@ -3,6 +3,54 @@
         "headless": true
     },
     "sites": {
+        "TJSP": {
+            "url": "https://esaj.tjsp.jus.br/cjsg/resultadoCompleta.do",
+            "search_config": {
+                "method": "form_fill",
+                "input_selector": "input[id='iddados.buscaInteiroTeor']",
+                "submit_selector": "#pbSubmit",
+                "aspnet": false,
+                "submit_method": "click",
+                "pagination": {
+                    "max_pages": 1,
+                    "method": "click",
+                    "next_selector": "a[title='Próxima página']",
+                    "prev_selector": "a[title='Página anterior']"
+                }
+            },
+            "groups": {
+                "linhas": {
+                    "type": { "multiple": 6 },
+                    "parent_group": "ementa",
+                    "members": {
+                        ".ementaClass2 strong": {},
+                        ".ementaClass2#text": {}
+                    }
+                },
+                "ementa": {
+                    "type": "single",
+                    "parent_group": "documento",
+                    "members": {
+                        ".ementaClass2 div[style='display: none;'] strong": {},
+                        ".ementaClass2 div[style='display: none;']#text": {}
+                    }
+                },
+                "documento": {
+                    "type": "single",
+                    "parent_group": "processos",
+                    "members": {
+                        ".esajLinkLogin": {
+                            "follow_link": false          
+                        }
+                    }
+                },
+                "processos": {
+                    "type": "all",
+                    "parent_group": null,
+                    "members": {}
+                }
+            }
+        },
         "TJRJ": {
             "url": "https://www3.tjrj.jus.br/ejuris/ConsultarJurisprudencia.aspx",
             "search_config": {
@@ -35,7 +83,7 @@
                     "members": {
                         "selector:a": {
                             "attribute": "href",
-                            "follow_link": true,
+                            "follow_link": false,
                             "use_config": "TJRJ"
                         }
                     }
