@@ -65,23 +65,23 @@ class Server:
 
     def handle_request(self, client, json_data: Dict[str, Any]) -> None:
         try:
-            site_cfg = self.config["sites"]["TJSP"]
+            result = {}
+                   
+            os.makedirs("debug", exist_ok=True)
+            for site_name, site_cfg in self.config["sites"].items():
+                worker = PlaywrightWorker(site_cfg)
+                pages_html = asyncio.run(worker.execute(json_data["search_term"]))
 
-            worker = PlaywrightWorker(site_cfg)
-            pages_html = asyncio.run(worker.execute(json_data["search_term"]))
+                open(f"debug/{site_name}_debug_pages.html", "w", encoding="utf-8").write("\n<!-- PAGE BREAK -->\n".join(pages_html))
 
-            open("debug_pages.html", "w", encoding="utf-8").write("\n<!-- PAGE BREAK -->\n".join(pages_html))
+                parser = ParserEngine(site_cfg)
+                parsed = asyncio.run(parser.parse(pages_html))
 
-            parser = ParserEngine(site_cfg)
-            parsed = asyncio.run(parser.parse(pages_html))
+                result[site_name] = parsed
+     
+            open("debug/debug_parsed.json", "w", encoding="utf-8").write(json.dumps(result, indent=4, ensure_ascii=False))
 
-            result = {
-                site_cfg["url"]: parsed
-            };
-            open("debug_parsed.json", "w", encoding="utf-8").write(json.dumps(result, indent=4, ensure_ascii=False))
-            
             response = self.create_response("finished", result)
-
             client.send(json.dumps(response, default=str).encode('utf-8'))
 
         except Exception as e:

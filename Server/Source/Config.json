@@ -1,6 +1,6 @@
 {
     "settings": {
-        "headless": true
+        "headless": false
     },
     "sites": {
         "TJSP": {
@@ -19,72 +19,28 @@
                 }
             },
             "groups": {
-                "linhas": {
-                    "type": { "multiple": 6 },
-                    "parent_group": "ementa",
-                    "members": {
-                        ".ementaClass2 strong": {},
-                        ".ementaClass2#text": {}
-                    }
-                },
                 "ementa": {
-                    "type": "single",
-                    "parent_group": "documento",
+                    "type": { "multiple": 7 },
+                    "parent_group": "processo",
                     "members": {
-                        ".ementaClass2 div[style='display: none;'] strong": {},
-                        ".ementaClass2 div[style='display: none;']#text": {}
+                        ".ementaClass2 strong": {
+                            "unique_consecutive": true,
+                            "cyclic": true,
+                            "cyclic_block_size": 7 
+                        },
+                        ".ementaClass2": {
+                            "not": ".ementaClass2 strong",
+                            "not_mode": "cyclic",
+                            "not_reorder": ".ementaClass2 strong"
+                        }
                     }
                 },
-                "documento": {
+                "processo": {
                     "type": "single",
-                    "parent_group": "processos",
+                    "parent_group": null,
                     "members": {
-                        ".esajLinkLogin": {
+                        ".esajLinkLogin.downloadEmenta": {
                             "follow_link": false          
-                        }
-                    }
-                },
-                "processos": {
-                    "type": "all",
-                    "parent_group": null,
-                    "members": {}
-                }
-            }
-        },
-        "TJRJ": {
-            "url": "https://www3.tjrj.jus.br/ejuris/ConsultarJurisprudencia.aspx",
-            "search_config": {
-                "method": "form_fill",
-                "input_selector": "input[id='ContentPlaceHolder1_txtTextoPesq']",
-                "submit_selector": "#ContentPlaceHolder1_btnPesquisar",
-                "aspnet": true,
-                "postback_target": "ctl00$ContentPlaceHolder1$btnPesquisar",
-                "submit_method": "postback",
-                "pagination": {
-                    "max_pages": 1,
-                    "method": "click",
-                    "next_selector": "img[id='avanca']",
-                    "prev_selector": "img[id='retorna']"
-                }
-            },
-            "groups": {
-                "dados": {
-                    "type": "all",
-                    "parent_group": null,
-                    "members": {
-                        "selector:tr": {
-                            "follow_link": false           
-                        }
-                    }
-                },
-                "document": {
-                    "type": "single",
-                    "parent_group": "dados",
-                    "members": {
-                        "selector:a": {
-                            "attribute": "href",
-                            "follow_link": false,
-                            "use_config": "TJRJ"
                         }
                     }
                 }

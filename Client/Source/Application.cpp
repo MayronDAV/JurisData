@@ -37,6 +37,13 @@ namespace JD
     static std::future<void> s_RequestFuture;
     static json s_Results;
     
+    namespace UI
+    {
+        static inline ImFont* FontRegular = nullptr;
+        static inline ImFont* FontBold    = nullptr;
+        static inline ImFont* FontMedium  = nullptr;
+    };
+
     namespace ImguiLayer
     {
         #include "Embed/Fonts/MaterialDesign.inl"
@@ -79,7 +86,7 @@ namespace JD
                 0
             };
 
-            io.Fonts->AddFontFromMemoryCompressedTTF(RobotoRegular_compressed_data, RobotoRegular_compressed_size, p_FontSize, &icons_config, ranges);
+            UI::FontRegular = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoRegular_compressed_data, RobotoRegular_compressed_size, p_FontSize, &icons_config, ranges);
             
             {
                 static const ImWchar icons_ranges[] = { ICON_MIN_MDI, ICON_MAX_MDI, 0 };
@@ -95,9 +102,9 @@ namespace JD
                 io.Fonts->AddFontFromMemoryCompressedTTF(MaterialDesign_compressed_data, MaterialDesign_compressed_size, p_FontSize, &icons_config, icons_ranges);
             }
 
-            io.Fonts->AddFontFromMemoryCompressedTTF(RobotoBold_compressed_data, RobotoBold_compressed_size, p_FontSize, &icons_config, ranges);
+            UI::FontBold = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoBold_compressed_data, RobotoBold_compressed_size, p_FontSize, &icons_config, ranges);
 
-            io.Fonts->AddFontFromMemoryCompressedTTF(RobotoRegular_compressed_data, RobotoRegular_compressed_size, p_FontSize, &icons_config, ranges);
+            UI::FontMedium = io.Fonts->AddFontFromMemoryCompressedTTF(RobotoMedium_compressed_data, RobotoMedium_compressed_size, p_FontSize, &icons_config, ranges);
         
             io.Fonts->TexGlyphPadding = 1;
             for (int n = 0; n < io.Fonts->Sources.Size; n++)
@@ -413,8 +420,6 @@ namespace JD
 
     void Application::DrawUI()
     {
-        // TODO: Make a way to avoid recalculating these statics every frame and only when necessary
-
         static std::chrono::steady_clock::time_point s_SearchStartTime;
         static float s_AnimationProgress = 0.0f;
 
@@ -524,28 +529,25 @@ namespace JD
     void Application::DrawResultsUI()
     {
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 40);
-    
+
         if (s_Results.contains("success") && !s_Results["success"].get<bool>())
         {
             std::string errorMsg = "Desconhecido (erro não documentado!)";
             if (s_Results.contains("content"))
-            {
                 errorMsg = s_Results["content"].get<std::string>();
-            }
+
             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Erro: %s", errorMsg.c_str());
             return;
         }
 
-        if (!s_Results.contains("content") || s_Results["content"].is_null() || 
+        if (!s_Results.contains("content") || s_Results["content"].is_null() ||
             (s_Results["content"].is_object() && s_Results["content"].empty()))
         {
             ImGui::Text("Nenhum resultado encontrado.");
             return;
         }
+
         auto& content = s_Results["content"];
-
-        // std::cout << "JSON recebido: " << content.dump(2) << std::endl;
-
         if (!content.is_object())
         {
             ImGui::Text("Formato de resposta inválido.");
@@ -554,27 +556,72 @@ namespace JD
 
         for (auto& [site, siteData] : content.items())
         {
-            ImGui::Spacing();
-            ImGui::Spacing();
-            
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, 1.0f));
-            ImGui::Text("%s", site.c_str());
-            ImGui::PopStyleColor();
-            
-            ImGui::Spacing();
-
             if (!siteData.is_object())
                 continue;
-                
+
+            if (site == "TJSP")
+            {
+                if (!siteData.contains("processo") || !siteData["processo"].is_array())
+                {
+                    ImGui::Text("Nenhum processo encontrado.");
+                    continue;
+                }
+
+                auto& processos = siteData["processo"];
+                int procIndex = 0;
+
+                for (auto& proc : processos)
+                {
+                    auto numProc = proc[".esajLinkLogin.downloadEmenta"].get<std::string>();
+                    ImGui::PushID(procIndex++);
+
+                    ImGui::Spacing();
+                    ImGui::BeginChild(("ProcessoBox" + std::to_string(procIndex)).c_str(), ImVec2(0, 0), true, ImGuiWindowFlags_None);
+
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.3f, 1.0f));
+                    ImGui::Text(numProc.c_str());
+                    ImGui::PopStyleColor();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    auto& ementa = proc["ementa"];
+                    for (int i = 0; i < 7; i++)
+                    {
+                        auto title = ementa[".ementaClass2 strong"][i].get<std::string>();
+                        auto text = ementa[".ementaClass2"][i].get<std::string>();
+
+                        ImGui::PushFont(UI::FontBold);
+                        ImGui::Text("%s", title.c_str());
+                        ImGui::PopFont();
+
+                        if (title != "Ementa:")
+                        {
+                            ImGui::SameLine();
+                            ImGui::Text("%s", text.c_str());
+                        }
+                        else
+                        {
+                            ImGui::TextWrapped("%s", text.c_str());
+                        }
+                    }
+
+                    ImGui::EndChild();
+                    ImGui::Spacing();
+
+                    ImGui::PopID();
+                }
+                continue;
+            }
+
             for (auto& [groupName, groupValues] : siteData.items())
             {
                 ImGui::Separator();
                 ImGui::Spacing();
-                
+
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.6f, 1.0f));
                 ImGui::Text("%s:", groupName.c_str());
                 ImGui::PopStyleColor();
-                
+
                 ImGui::Spacing();
 
                 if (!groupValues.is_array())
@@ -587,7 +634,7 @@ namespace JD
                 for (auto& item : groupValues)
                 {
                     ImGui::PushID(itemIndex++);
-                    
+
                     ImGui::Separator();
                     ImGui::Spacing();
 
@@ -595,11 +642,7 @@ namespace JD
                     {
                         for (auto& [key, value] : item.items())
                         {
-                            std::string valStr;
-                            if (value.is_string()) 
-                                valStr = value.get<std::string>();
-                            else 
-                                valStr = value.dump();
+                            std::string valStr = value.is_string() ? value.get<std::string>() : value.dump();
 
                             ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.6f, 1.0f), "%s:", key.c_str());
                             ImGui::SameLine(150);
@@ -607,13 +650,14 @@ namespace JD
                             ImGui::Spacing();
                         }
                     }
-                    
+
                     ImGui::Spacing();
                     ImGui::PopID();
                 }
             }
         }
     }
+
 
     void Application::DrawLoadingSpinner()
     {
